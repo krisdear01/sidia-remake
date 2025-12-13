@@ -85,6 +85,8 @@ Route::prefix('v1/admin')->middleware('auth:sanctum')->group(function () {
 
     // Polygons CRUD
     Route::apiResource('polygons', PolygonController::class)->except(['index', 'show']);
+    Route::post('/polygons/import', [PolygonController::class, 'importGeoJson']);
+    Route::delete('/polygons/delete-all', [PolygonController::class, 'deleteAll']);
 
     // Schedules CRUD
     Route::apiResource('schedules', ScheduleController::class)->except(['index', 'show']);

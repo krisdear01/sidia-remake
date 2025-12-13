@@ -50,12 +50,35 @@ export const AssetMap: React.FC = () => {
   const [geoJsonData, setGeoJsonData] = useState<any>(null);
   const [hoveredFeature, setHoveredFeature] = useState<string | null>(null);
 
-  // Load GeoJSON data
+  // Load GeoJSON data - try API first, fallback to static file
   useEffect(() => {
-    fetch('/DataPolygon_SHP_Unud.geojson')
-      .then(res => res.json())
-      .then(data => setGeoJsonData(data))
-      .catch(err => console.error('Failed to load GeoJSON:', err));
+    const loadGeoJSON = async () => {
+      try {
+        // First, try to load from API (imported polygons)
+        const apiResponse = await fetch('http://localhost:8000/api/v1/polygons/geojson');
+        if (apiResponse.ok) {
+          const apiData = await apiResponse.json();
+          // If API has features, use them; otherwise fallback to static
+          if (apiData.features && apiData.features.length > 0) {
+            setGeoJsonData(apiData);
+            return;
+          }
+        }
+      } catch (err) {
+        console.log('API not available, falling back to static file');
+      }
+
+      // Fallback to static GeoJSON file
+      try {
+        const res = await fetch('/DataPolygon_SHP_Unud.geojson');
+        const data = await res.json();
+        setGeoJsonData(data);
+      } catch (err) {
+        console.error('Failed to load GeoJSON:', err);
+      }
+    };
+
+    loadGeoJSON();
   }, []);
 
   // Initialize map
@@ -111,50 +134,103 @@ export const AssetMap: React.FC = () => {
     const geoJsonLayer = L.geoJSON(filteredData, {
       style: (feature) => {
         if (!feature?.properties) return {};
-        const shp = feature.properties['NO.SHP'];
-        const unit = SHP_TO_UNIT[shp];
-        const config = unit ? UNIT_CONFIG[unit] : null;
-        const isSelected = selectedUnits.size === 0 || (unit && selectedUnits.has(unit));
-        const isHighlighted = hoveredFeature === shp;
 
-        return {
-          fillColor: config?.color || '#808080',
-          weight: isHighlighted ? 3 : 1,
-          opacity: 1,
-          color: isHighlighted ? '#000' : '#333',
-          fillOpacity: isSelected ? (isHighlighted ? 0.9 : 0.6) : 0.2,
-        };
+        // Check if this is API data (has fill_color) or static data (has NO.SHP)
+        const isApiData = 'fill_color' in feature.properties;
+
+        if (isApiData) {
+          // API polygon format
+          const props = feature.properties;
+          const featureId = props.id || props.name;
+          const isHighlighted = hoveredFeature === featureId;
+
+          return {
+            fillColor: props.fill_color || '#3b82f6',
+            weight: isHighlighted ? 3 : 2,
+            opacity: 1,
+            color: props.stroke_color || '#1d4ed8',
+            fillOpacity: isHighlighted ? 0.8 : (props.fill_opacity || 0.4),
+          };
+        } else {
+          // Static file format (NO.SHP based)
+          const shp = feature.properties['NO.SHP'];
+          const unit = SHP_TO_UNIT[shp];
+          const config = unit ? UNIT_CONFIG[unit] : null;
+          const isSelected = selectedUnits.size === 0 || (unit && selectedUnits.has(unit));
+          const isHighlighted = hoveredFeature === shp;
+
+          return {
+            fillColor: config?.color || '#808080',
+            weight: isHighlighted ? 3 : 1,
+            opacity: 1,
+            color: isHighlighted ? '#000' : '#333',
+            fillOpacity: isSelected ? (isHighlighted ? 0.9 : 0.6) : 0.2,
+          };
+        }
       },
       onEachFeature: (feature, layer) => {
-        const shp = feature.properties?.['NO.SHP'];
-        const unit = SHP_TO_UNIT[shp];
+        const props = feature.properties;
+        const isApiData = 'fill_color' in props;
 
-        layer.on({
-          mouseover: () => setHoveredFeature(shp),
-          mouseout: () => setHoveredFeature(null),
-          click: () => {
-            if (unit) {
+        if (isApiData) {
+          // API polygon format
+          const featureId = props.id || props.name;
+          const name = props.name || `Polygon ${props.id}`;
+
+          layer.on({
+            mouseover: () => setHoveredFeature(featureId),
+            mouseout: () => setHoveredFeature(null),
+            click: () => {
               L.popup()
                 .setLatLng((layer as any).getBounds().getCenter())
                 .setContent(`
                   <div style="min-width: 150px;">
-                    <strong style="font-size: 14px;">${unit}</strong>
-                    <br/>
-                    <span style="color: #666; font-size: 12px;">ID: ${shp}</span>
+                    <strong style="font-size: 14px;">${name}</strong>
+                    ${props.faculty ? `<br/><span style="color: #666; font-size: 12px;">${props.faculty}</span>` : ''}
+                    ${props.land_area ? `<br/><span style="color: #666; font-size: 11px;">Area: ${Number(props.land_area).toLocaleString('id-ID')} m²</span>` : ''}
                   </div>
                 `)
                 .openOn(mapRef.current!);
-            }
-          },
-        });
+            },
+          });
 
-        // Add tooltip
-        if (unit) {
-          layer.bindTooltip(unit, {
+          layer.bindTooltip(name, {
             permanent: false,
             direction: 'center',
             className: 'unit-tooltip',
           });
+        } else {
+          // Static file format
+          const shp = props?.['NO.SHP'];
+          const unit = SHP_TO_UNIT[shp];
+
+          layer.on({
+            mouseover: () => setHoveredFeature(shp),
+            mouseout: () => setHoveredFeature(null),
+            click: () => {
+              if (unit) {
+                L.popup()
+                  .setLatLng((layer as any).getBounds().getCenter())
+                  .setContent(`
+                    <div style="min-width: 150px;">
+                      <strong style="font-size: 14px;">${unit}</strong>
+                      <br/>
+                      <span style="color: #666; font-size: 12px;">ID: ${shp}</span>
+                    </div>
+                  `)
+                  .openOn(mapRef.current!);
+              }
+            },
+          });
+
+          // Add tooltip
+          if (unit) {
+            layer.bindTooltip(unit, {
+              permanent: false,
+              direction: 'center',
+              className: 'unit-tooltip',
+            });
+          }
         }
       },
     });

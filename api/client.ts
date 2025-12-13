@@ -155,6 +155,27 @@ export const polygonsApi = {
   delete: (id: number) => apiFetch<any>(`/admin/polygons/${id}`, {
     method: 'DELETE',
   }),
+  import: (data: {
+    geojson: any;
+    location_id?: number;
+    faculty_id?: number;
+    default_fill_color?: string;
+    default_stroke_color?: string;
+    default_fill_opacity?: number;
+    clear_existing?: boolean;
+  }) => apiFetch<{
+    message: string;
+    imported_count: number;
+    error_count: number;
+    errors: string[];
+    polygons: { id: number; name: string }[];
+  }>('/admin/polygons/import', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  deleteAll: () => apiFetch<{ message: string; deleted_count: number }>('/admin/polygons/delete-all', {
+    method: 'DELETE',
+  }),
 };
 
 // Schedules API
