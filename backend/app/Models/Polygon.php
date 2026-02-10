@@ -24,7 +24,7 @@ class Polygon extends Model
     protected $casts = [
         'geojson' => 'array',
         'is_active' => 'boolean',
-        'fill_opacity' => 'decimal:2',
+        'fill_opacity' => 'float',
         'land_area' => 'decimal:2',
     ];
 

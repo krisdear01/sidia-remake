@@ -46,7 +46,7 @@ export const AssetMap: React.FC = () => {
   const mapRef = useRef<L.Map | null>(null);
   const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
   const initialBoundsSet = useRef(false);
-  const [selectedUnits, setSelectedUnits] = useState<Set<UnitName>>(new Set());
+  const [selectedFaculties, setSelectedFaculties] = useState<Set<string>>(new Set());
   const [geoJsonData, setGeoJsonData] = useState<any>(null);
   const [hoveredFeature, setHoveredFeature] = useState<string | null>(null);
 
@@ -55,26 +55,34 @@ export const AssetMap: React.FC = () => {
     const loadGeoJSON = async () => {
       try {
         // First, try to load from API (imported polygons)
+        console.log('[AssetMap] Fetching GeoJSON from API...');
         const apiResponse = await fetch('http://localhost:8000/api/v1/polygons/geojson');
         if (apiResponse.ok) {
           const apiData = await apiResponse.json();
+          console.log('[AssetMap] API Response:', {
+            type: apiData.type,
+            featureCount: apiData.features?.length || 0
+          });
           // If API has features, use them; otherwise fallback to static
           if (apiData.features && apiData.features.length > 0) {
+            console.log('[AssetMap] Using API data with', apiData.features.length, 'features');
             setGeoJsonData(apiData);
             return;
           }
         }
       } catch (err) {
-        console.log('API not available, falling back to static file');
+        console.log('[AssetMap] API not available, falling back to static file:', err);
       }
 
       // Fallback to static GeoJSON file
       try {
+        console.log('[AssetMap] Fetching static GeoJSON file...');
         const res = await fetch('/DataPolygon_SHP_Unud.geojson');
         const data = await res.json();
+        console.log('[AssetMap] Static file loaded:', data.features?.length, 'features');
         setGeoJsonData(data);
       } catch (err) {
-        console.error('Failed to load GeoJSON:', err);
+        console.error('[AssetMap] Failed to load GeoJSON:', err);
       }
     };
 
@@ -103,6 +111,11 @@ export const AssetMap: React.FC = () => {
 
     mapRef.current = map;
 
+    // Invalidate size after a short delay to ensure proper rendering
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+
     return () => {
       map.remove();
       mapRef.current = null;
@@ -118,14 +131,25 @@ export const AssetMap: React.FC = () => {
       mapRef.current.removeLayer(geoJsonLayerRef.current);
     }
 
-    // Filter features if units are selected
-    const filteredData = selectedUnits.size > 0
+    // Filter features if faculties are selected
+    const filteredData = selectedFaculties.size > 0
       ? {
         ...geoJsonData,
         features: geoJsonData.features.filter((f: any) => {
-          const shp = f.properties?.['NO.SHP'];
-          const unit = SHP_TO_UNIT[shp];
-          return unit && selectedUnits.has(unit);
+          const props = f.properties;
+          // Check if this is API data (has fill_color/faculty) or static data (has NO.SHP)
+          const isApiData = 'fill_color' in props;
+
+          if (isApiData) {
+            // API data: filter by faculty property
+            const faculty = props.faculty || 'Unknown';
+            return selectedFaculties.has(faculty);
+          } else {
+            // Static data: filter by SHP to unit mapping
+            const shp = props?.['NO.SHP'];
+            const unit = SHP_TO_UNIT[shp];
+            return unit && selectedFaculties.has(unit);
+          }
         }),
       }
       : geoJsonData;
@@ -149,14 +173,14 @@ export const AssetMap: React.FC = () => {
             weight: isHighlighted ? 3 : 2,
             opacity: 1,
             color: props.stroke_color || '#1d4ed8',
-            fillOpacity: isHighlighted ? 0.8 : (props.fill_opacity || 0.4),
+            fillOpacity: isHighlighted ? 0.8 : (Number(props.fill_opacity) || 0.4),
           };
         } else {
           // Static file format (NO.SHP based)
           const shp = feature.properties['NO.SHP'];
           const unit = SHP_TO_UNIT[shp];
           const config = unit ? UNIT_CONFIG[unit] : null;
-          const isSelected = selectedUnits.size === 0 || (unit && selectedUnits.has(unit));
+          const isSelected = selectedFaculties.size === 0 || (unit && selectedFaculties.has(unit));
           const isHighlighted = hoveredFeature === shp;
 
           return {
@@ -238,21 +262,38 @@ export const AssetMap: React.FC = () => {
     geoJsonLayer.addTo(mapRef.current);
     geoJsonLayerRef.current = geoJsonLayer;
 
-    // Fit bounds only on initial load (not on selection changes)
-    if (!initialBoundsSet.current && geoJsonLayer.getBounds().isValid()) {
-      mapRef.current.fitBounds(geoJsonLayer.getBounds(), { padding: [20, 20] });
-      initialBoundsSet.current = true;
+    // Log layer count for debugging
+    let layerCount = 0;
+    geoJsonLayer.eachLayer(() => layerCount++);
+    console.log('[AssetMap] Layer added. Total features rendered:', layerCount);
+    console.log('[AssetMap] Layer bounds:', geoJsonLayer.getBounds());
+
+    // Set initial view to Jimbaran campus (main campus with most polygons)
+    // Only on initial load, not on selection changes
+    if (!initialBoundsSet.current) {
+      setTimeout(() => {
+        if (!mapRef.current || initialBoundsSet.current) return;
+
+        // Center on Jimbaran campus at a zoom level that shows polygon details
+        const jimbaranCenter: [number, number] = [-8.7970, 115.1720];
+        const defaultZoom = 16;
+
+        console.log('[AssetMap] Setting view to Jimbaran campus:', jimbaranCenter, 'zoom:', defaultZoom);
+        mapRef.current.invalidateSize();
+        mapRef.current.setView(jimbaranCenter, defaultZoom);
+        initialBoundsSet.current = true;
+      }, 200);
     }
-  }, [geoJsonData, selectedUnits, hoveredFeature]);
+  }, [geoJsonData, selectedFaculties, hoveredFeature]);
 
   // Handle legend item click
-  const handleLegendClick = (unit: UnitName) => {
-    setSelectedUnits(prev => {
+  const handleLegendClick = (faculty: string) => {
+    setSelectedFaculties(prev => {
       const next = new Set(prev);
-      if (next.has(unit)) {
-        next.delete(unit);
+      if (next.has(faculty)) {
+        next.delete(faculty);
       } else {
-        next.add(unit);
+        next.add(faculty);
       }
       return next;
     });
@@ -260,17 +301,53 @@ export const AssetMap: React.FC = () => {
 
   // Clear all selections
   const handleClearSelection = () => {
-    setSelectedUnits(new Set());
+    setSelectedFaculties(new Set());
   };
 
-  // Legend items sorted by display order
-  const legendItems = useMemo(() =>
-    Object.entries(UNIT_CONFIG).map(([name, config]) => ({
-      name: name as UnitName,
-      color: config.color,
-      count: config.shp.length,
-    })),
-    []);
+  // Build legend items from actual data (unique faculties with colors)
+  const legendItems = useMemo(() => {
+    if (!geoJsonData?.features) {
+      // Fallback to UNIT_CONFIG if no data loaded yet
+      return Object.entries(UNIT_CONFIG).map(([name, config]) => ({
+        name,
+        color: config.color,
+        count: config.shp.length,
+      }));
+    }
+
+    // Check if this is API data
+    const isApiData = geoJsonData.features.some((f: any) => 'fill_color' in f.properties);
+
+    if (isApiData) {
+      // Build from API data faculties
+      const facultyMap = new Map<string, { color: string; count: number }>();
+
+      geoJsonData.features.forEach((f: any) => {
+        const faculty = f.properties.faculty || 'Unknown';
+        const color = f.properties.fill_color || '#3b82f6';
+
+        if (facultyMap.has(faculty)) {
+          const existing = facultyMap.get(faculty)!;
+          existing.count++;
+        } else {
+          facultyMap.set(faculty, { color, count: 1 });
+        }
+      });
+
+      return Array.from(facultyMap.entries()).map(([name, data]) => ({
+        name,
+        color: data.color,
+        count: data.count,
+      }));
+    } else {
+      // Use UNIT_CONFIG for static data
+      return Object.entries(UNIT_CONFIG).map(([name, config]) => ({
+        name,
+        color: config.color,
+        count: config.shp.length,
+      }));
+    }
+  }, [geoJsonData]);
 
   return (
     <div className="space-y-4">
@@ -281,12 +358,12 @@ export const AssetMap: React.FC = () => {
             Luas Tanah Keseluruhan : <span className="font-mono font-medium text-slate-900">1.643.867 M²</span>
           </p>
         </div>
-        {selectedUnits.size > 0 && (
+        {selectedFaculties.size > 0 && (
           <button
             onClick={handleClearSelection}
             className="text-sm text-blue-600 hover:text-blue-800 font-medium"
           >
-            Tampilkan Semua ({selectedUnits.size} unit dipilih)
+            Tampilkan Semua ({selectedFaculties.size} unit dipilih)
           </button>
         )}
       </div>
@@ -302,8 +379,8 @@ export const AssetMap: React.FC = () => {
           </div>
           <div className="max-h-[460px] overflow-y-auto p-2 space-y-0.5">
             {legendItems.map((item) => {
-              const isSelected = selectedUnits.has(item.name);
-              const isActive = selectedUnits.size === 0 || isSelected;
+              const isSelected = selectedFaculties.has(item.name);
+              const isActive = selectedFaculties.size === 0 || isSelected;
 
               return (
                 <button
@@ -331,8 +408,8 @@ export const AssetMap: React.FC = () => {
         </div>
 
         {/* Map Container */}
-        <div className="flex-1 relative h-[500px] rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-          <div ref={mapContainerRef} className="absolute inset-0 z-0" />
+        <div className="flex-1 relative h-[500px] rounded-2xl border border-slate-200 overflow-hidden shadow-sm bg-slate-100">
+          <div ref={mapContainerRef} className="absolute inset-0 z-[1]" />
 
           {/* Loading state */}
           {!geoJsonData && (

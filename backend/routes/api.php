@@ -11,6 +11,10 @@ use App\Http\Controllers\Api\LocationController;
 use App\Http\Controllers\Api\FacultyController;
 use App\Http\Controllers\Api\StatsController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BidderAuthController;
+use App\Http\Controllers\Api\AuctionController;
+use App\Http\Controllers\Api\BidController;
+use App\Http\Controllers\Api\AdminAuctionController;
 
 /*
 |--------------------------------------------------------------------------
@@ -57,6 +61,44 @@ Route::prefix('v1')->group(function () {
 
     // Auth
     Route::post('/auth/login', [AuthController::class, 'login']);
+
+    // ==================== E-LELANG PUBLIC ROUTES ====================
+
+    // Auctions (public listing)
+    Route::get('/auctions', [AuctionController::class, 'index']);
+    Route::get('/auctions/{id}', [AuctionController::class, 'show']);
+    Route::get('/auctions/{id}/bids', [AuctionController::class, 'bids']);
+
+    // Facilities (public listing)
+    Route::get('/facilities', [AuctionController::class, 'facilities']);
+    Route::get('/facilities/{id}/availability', [AuctionController::class, 'facilityAvailability']);
+
+    // Bidder Auth (public)
+    Route::post('/bidder/register', [BidderAuthController::class, 'register']);
+    Route::post('/bidder/login', [BidderAuthController::class, 'login']);
+    Route::get('/bidder/verify-email/{token}', [BidderAuthController::class, 'verifyEmail']);
+});
+
+// ==================== BIDDER PROTECTED ROUTES ====================
+Route::prefix('v1/bidder')->middleware('auth:sanctum')->group(function () {
+    // Auth
+    Route::post('/logout', [BidderAuthController::class, 'logout']);
+    Route::get('/profile', [BidderAuthController::class, 'profile']);
+    Route::put('/profile', [BidderAuthController::class, 'updateProfile']);
+    Route::post('/resend-verification', [BidderAuthController::class, 'resendVerification']);
+
+    // Deposits
+    Route::post('/auctions/{id}/deposit', [BidController::class, 'submitDeposit']);
+    Route::get('/my-deposits', [BidController::class, 'myDeposits']);
+
+    // Bidding
+    Route::post('/auctions/{id}/bid', [BidController::class, 'placeBid']);
+    Route::get('/my-bids', [BidController::class, 'myBids']);
+
+    // Facility Bookings
+    Route::post('/facilities/{id}/book', [BidController::class, 'bookFacility']);
+    Route::get('/my-bookings', [BidController::class, 'myBookings']);
+    Route::post('/bookings/{id}/cancel', [BidController::class, 'cancelBooking']);
 });
 
 // Protected routes (admin only)
@@ -91,4 +133,30 @@ Route::prefix('v1/admin')->middleware('auth:sanctum')->group(function () {
     // Schedules CRUD
     Route::apiResource('schedules', ScheduleController::class)->except(['index', 'show']);
     Route::post('/schedules/sync-sipirang', [ScheduleController::class, 'syncWithSipirang']);
+
+    // ==================== E-LELANG ADMIN ROUTES ====================
+
+    // Auction Management
+    Route::get('/auctions', [AdminAuctionController::class, 'index']);
+    Route::post('/auctions', [AdminAuctionController::class, 'store']);
+    Route::put('/auctions/{id}', [AdminAuctionController::class, 'update']);
+    Route::delete('/auctions/{id}', [AdminAuctionController::class, 'destroy']);
+    Route::put('/auctions/{id}/status', [AdminAuctionController::class, 'updateStatus']);
+    Route::post('/auctions/{id}/determine-winner', [AdminAuctionController::class, 'determineWinner']);
+
+    // Bidder Management
+    Route::get('/bidders', [AdminAuctionController::class, 'bidders']);
+    Route::get('/bidders/{id}', [AdminAuctionController::class, 'bidderShow']);
+    Route::put('/bidders/{id}/verify', [AdminAuctionController::class, 'verifyBidder']);
+
+    // Deposit Management
+    Route::get('/deposits', [AdminAuctionController::class, 'deposits']);
+    Route::put('/deposits/{id}/verify', [AdminAuctionController::class, 'verifyDeposit']);
+    Route::post('/deposits/{id}/refund', [AdminAuctionController::class, 'refundDeposit']);
+
+    // Facility Booking Management
+    Route::get('/facility-bookings', [AdminAuctionController::class, 'facilityBookings']);
+    Route::put('/facility-bookings/{id}/status', [AdminAuctionController::class, 'updateBookingStatus']);
+    Route::post('/facility-bookings/{id}/complete', [AdminAuctionController::class, 'completeBooking']);
 });
+

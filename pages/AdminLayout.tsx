@@ -15,6 +15,8 @@ import {
     MapPin,
     Bell,
     ChevronDown,
+    Gavel,
+    Users,
 } from 'lucide-react';
 
 const navItems = [
@@ -24,6 +26,7 @@ const navItems = [
     { path: '/admin/assets', icon: Package, label: 'Aset' },
     { path: '/admin/polygons', icon: Map, label: 'Peta & Polygon' },
     { path: '/admin/schedules', icon: Calendar, label: 'Jadwal' },
+    { path: '/admin/auctions', icon: Gavel, label: 'E-Lelang' },
 ];
 
 export const AdminLayout: React.FC = () => {

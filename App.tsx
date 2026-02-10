@@ -17,6 +17,19 @@ import { AssetsPage } from './pages/AssetsPage';
 import { PolygonsPage } from './pages/PolygonsPage';
 import { SchedulesPage } from './pages/SchedulesPage';
 
+// E-Lelang Pages
+import { AuctionListPage } from './pages/AuctionListPage';
+import { AuctionDetailPage } from './pages/AuctionDetailPage';
+import { BidderRegisterPage } from './pages/BidderRegisterPage';
+import { BidderLoginPage } from './pages/BidderLoginPage';
+import { AdminAuctionsPage } from './pages/AdminAuctionsPage';
+
+// Academic/Public Pages
+import { GedungPage } from './pages/GedungPage';
+import { LaboratoriumPage } from './pages/LaboratoriumPage';
+import { RuangRapatPage } from './pages/RuangRapatPage';
+import { PerpustakaanPage } from './pages/PerpustakaanPage';
+
 // Public Home Page Component
 const HomePage: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -320,6 +333,18 @@ const App: React.FC = () => {
         {/* Public Routes */}
         <Route path="/" element={<HomePage />} />
 
+        {/* E-Lelang Public Routes */}
+        <Route path="/lelang" element={<AuctionListPage />} />
+        <Route path="/lelang/:id" element={<AuctionDetailPage />} />
+        <Route path="/lelang/register" element={<BidderRegisterPage />} />
+        <Route path="/lelang/login" element={<BidderLoginPage />} />
+
+        {/* Academic Public Routes */}
+        <Route path="/gedung" element={<GedungPage />} />
+        <Route path="/laboratorium" element={<LaboratoriumPage />} />
+        <Route path="/ruang-rapat" element={<RuangRapatPage />} />
+        <Route path="/perpustakaan" element={<PerpustakaanPage />} />
+
         {/* Admin Login */}
         <Route
           path="/admin/login"
@@ -345,6 +370,7 @@ const App: React.FC = () => {
           <Route path="assets" element={<AssetsPage />} />
           <Route path="polygons" element={<PolygonsPage />} />
           <Route path="schedules" element={<SchedulesPage />} />
+          <Route path="auctions" element={<AdminAuctionsPage />} />
         </Route>
 
         {/* Catch-all redirect */}
