@@ -6,3 +6,7 @@ export { RoomsPage } from './RoomsPage';
 export { AssetsPage } from './AssetsPage';
 export { PolygonsPage } from './PolygonsPage';
 export { SchedulesPage } from './SchedulesPage';
+export { GedungPage } from './GedungPage';
+export { LaboratoriumPage } from './LaboratoriumPage';
+export { RuangRapatPage } from './RuangRapatPage';
+export { PerpustakaanPage } from './PerpustakaanPage';

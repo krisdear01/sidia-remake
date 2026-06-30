@@ -1,0 +1,37 @@
+<?php
+
+use App\Http\Middleware\AdminTokenAuth;
+use App\Http\Middleware\CacheControl;
+use App\Http\Middleware\ForceJsonProblem;
+use App\Http\Middleware\PerIpRateLimit;
+use App\Http\Middleware\StripPiiResponse;
+use App\Support\ProblemJson;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
+
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        api: __DIR__.'/../routes/api.php',
+        commands: __DIR__.'/../routes/console.php',
+        health: '/up',
+    )
+    ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->alias([
+            'siau.ratelimit' => PerIpRateLimit::class,
+            'siau.strippii' => StripPiiResponse::class,
+            'siau.jsonproblem' => ForceJsonProblem::class,
+            'siau.admin' => AdminTokenAuth::class,
+            'siau.cache' => CacheControl::class,
+        ]);
+    })
+    ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->render(function (Throwable $e, Request $request) {
+            if ($request->is('api/*')) {
+                return ProblemJson::render($e, $request);
+            }
+            return null;
+        });
+    })->create();

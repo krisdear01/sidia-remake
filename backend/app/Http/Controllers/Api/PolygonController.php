@@ -21,6 +21,10 @@ class PolygonController extends Controller
             $query->where('location_id', $request->location_id);
         }
 
+        if ($request->filled('layer')) {
+            $query->where('layer', $request->string('layer'));
+        }
+
         $polygons = $query->get();
 
         return response()->json($polygons);
@@ -33,6 +37,9 @@ class PolygonController extends Controller
             'building_id' => 'nullable|exists:buildings,id',
             'faculty_id' => 'nullable|exists:faculties,id',
             'location_id' => 'nullable|exists:locations,id',
+            'siisyana_gedung_id' => 'nullable|integer|min:1',
+            'siisyana_tanah_id' => 'nullable|integer|min:1',
+            'asset_type' => 'nullable|string|in:bangunan,tanah',
             'geojson' => 'required|array',
             'fill_color' => 'string|max:7',
             'stroke_color' => 'string|max:7',
@@ -58,6 +65,9 @@ class PolygonController extends Controller
             'building_id' => 'nullable|exists:buildings,id',
             'faculty_id' => 'nullable|exists:faculties,id',
             'location_id' => 'nullable|exists:locations,id',
+            'siisyana_gedung_id' => 'nullable|integer|min:1',
+            'siisyana_tanah_id' => 'nullable|integer|min:1',
+            'asset_type' => 'nullable|string|in:bangunan,tanah',
             'geojson' => 'array',
             'fill_color' => 'string|max:7',
             'stroke_color' => 'string|max:7',
@@ -89,6 +99,10 @@ class PolygonController extends Controller
             $query->where('location_id', $request->location_id);
         }
 
+        if ($request->filled('layer')) {
+            $query->where('layer', $request->string('layer'));
+        }
+
         $polygons = $query->get();
 
         $features = $polygons->map(function ($polygon) {
@@ -98,12 +112,17 @@ class PolygonController extends Controller
                 'properties' => [
                     'id' => $polygon->id,
                     'name' => $polygon->name,
+                    'layer' => $polygon->layer,
                     'building' => $polygon->building?->name,
                     'faculty' => $polygon->faculty?->name,
                     'fill_color' => $polygon->fill_color,
                     'stroke_color' => $polygon->stroke_color,
                     'fill_opacity' => $polygon->fill_opacity,
                     'land_area' => $polygon->land_area,
+                    // SIISYANA linkage so the FE knows what to fetch on click.
+                    'asset_type' => $polygon->asset_type,
+                    'siisyana_gedung_id' => $polygon->siisyana_gedung_id,
+                    'siisyana_tanah_id' => $polygon->siisyana_tanah_id,
                 ],
             ];
         });
@@ -111,6 +130,104 @@ class PolygonController extends Controller
         return response()->json([
             'type' => 'FeatureCollection',
             'features' => $features,
+        ]);
+    }
+
+    // Import GeoJSON FeatureCollection
+    public function importGeoJson(Request $request)
+    {
+        $validated = $request->validate([
+            'geojson' => 'required|array',
+            'geojson.type' => 'required|string|in:FeatureCollection',
+            'geojson.features' => 'required|array',
+            'location_id' => 'nullable|exists:locations,id',
+            'faculty_id' => 'nullable|exists:faculties,id',
+            'default_fill_color' => 'nullable|string|max:7',
+            'default_stroke_color' => 'nullable|string|max:7',
+            'default_fill_opacity' => 'nullable|numeric|min:0|max:1',
+            'clear_existing' => 'nullable|boolean',
+        ]);
+
+        $geojson = $validated['geojson'];
+        $locationId = $validated['location_id'] ?? null;
+        $facultyId = $validated['faculty_id'] ?? null;
+        $defaultFillColor = $validated['default_fill_color'] ?? '#3b82f6';
+        $defaultStrokeColor = $validated['default_stroke_color'] ?? '#1d4ed8';
+        $defaultFillOpacity = $validated['default_fill_opacity'] ?? 0.4;
+        $clearExisting = $validated['clear_existing'] ?? false;
+
+        // Optionally clear existing polygons
+        if ($clearExisting) {
+            Polygon::query()->delete();
+        }
+
+        $imported = [];
+        $errors = [];
+        $index = 0;
+
+        foreach ($geojson['features'] as $feature) {
+            $index++;
+            
+            try {
+                // Skip features without geometry
+                if (empty($feature['geometry'])) {
+                    $errors[] = "Feature {$index}: Missing geometry, skipped.";
+                    continue;
+                }
+
+                $geometry = $feature['geometry'];
+                $properties = $feature['properties'] ?? [];
+
+                // Generate name from properties or use index
+                $name = $properties['name'] 
+                    ?? $properties['NAME'] 
+                    ?? $properties['NO.SHP'] 
+                    ?? $properties['id'] 
+                    ?? "Polygon {$index}";
+
+                // Calculate approximate land area from coordinates if not provided
+                $landArea = $properties['land_area'] ?? $properties['area'] ?? null;
+
+                $polygon = Polygon::create([
+                    'name' => $name,
+                    'geojson' => $geometry,
+                    'location_id' => $locationId,
+                    'faculty_id' => $facultyId,
+                    'fill_color' => $properties['fill_color'] ?? $defaultFillColor,
+                    'stroke_color' => $properties['stroke_color'] ?? $defaultStrokeColor,
+                    'fill_opacity' => $properties['fill_opacity'] ?? $defaultFillOpacity,
+                    'land_area' => $landArea,
+                    'description' => $properties['description'] ?? null,
+                    'is_active' => true,
+                ]);
+
+                $imported[] = $polygon;
+            } catch (\Exception $e) {
+                $errors[] = "Feature {$index}: " . $e->getMessage();
+            }
+        }
+
+        return response()->json([
+            'message' => 'Import completed',
+            'imported_count' => count($imported),
+            'error_count' => count($errors),
+            'errors' => $errors,
+            'polygons' => collect($imported)->map(fn($p) => [
+                'id' => $p->id,
+                'name' => $p->name,
+            ]),
+        ], count($imported) > 0 ? 201 : 400);
+    }
+
+    // Delete all polygons
+    public function deleteAll()
+    {
+        $count = Polygon::count();
+        Polygon::query()->delete();
+
+        return response()->json([
+            'message' => "Deleted {$count} polygons",
+            'deleted_count' => $count,
         ]);
     }
 }

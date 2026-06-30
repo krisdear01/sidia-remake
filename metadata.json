@@ -1,5 +1,5 @@
 {
-  "name": "SIDIA - Digital Asset System",
-  "description": "A modern digital asset and room scheduling dashboard for university academic use, featuring real-time room status, asset tracking, and schedule visualization.",
+  "name": "SIAU - Sistem Informasi Aset Udayana",
+  "description": "Sistem Informasi Aset Universitas Udayana — manajemen aset, ruangan, dan jadwal akademik.",
   "requestFramePermissions": []
 }

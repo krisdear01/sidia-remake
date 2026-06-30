@@ -1,0 +1,33 @@
+# Local-only compose for the SIAU gateway.
+# Production deploys use the same image but driven by your orchestrator
+# (k8s, ECS, Nomad…) with a blue/green strategy described in DEPLOY.md.
+
+version: "3.9"
+
+services:
+  gateway:
+    build: .
+    image: siau-gateway:dev
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      LOG_CHANNEL: stderr
+      CACHE_STORE: redis
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5

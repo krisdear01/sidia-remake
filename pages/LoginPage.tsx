@@ -41,8 +41,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-500/30 mb-4">
                             <MapPin className="text-white" size={32} />
                         </div>
-                        <h1 className="text-3xl font-bold text-white">SIDIA Admin</h1>
-                        <p className="text-blue-200 text-sm mt-1">Sistem Informasi Digital Aset</p>
+                        <h1 className="text-3xl font-bold text-white">SIAU Admin</h1>
+                        <p className="text-blue-200 text-sm mt-1">Sistem Informasi Aset Udayana</p>
                     </div>
 
                     {/* Error Alert */}
@@ -65,7 +65,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="admin@sidia.unud.ac.id"
+                                    placeholder="admin@siau.unud.ac.id"
                                     className="w-full bg-white/10 border border-white/20 rounded-xl py-3 pl-12 pr-4 text-white placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                                     required
                                 />

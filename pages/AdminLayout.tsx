@@ -15,15 +15,30 @@ import {
     MapPin,
     Bell,
     ChevronDown,
+    Gavel,
+    Users,
+    ShieldCheck,
+    TrendingDown,
 } from 'lucide-react';
 
-const navItems = [
+interface NavItem {
+    path: string;
+    icon: React.ElementType;
+    label: string;
+    end?: boolean;
+    badge?: string;
+}
+
+const navItems: NavItem[] = [
     { path: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
     { path: '/admin/buildings', icon: Building2, label: 'Gedung' },
     { path: '/admin/rooms', icon: DoorOpen, label: 'Ruangan' },
+    { path: '/admin/validate-rooms', icon: ShieldCheck, label: 'Validasi Ruangan' },
     { path: '/admin/assets', icon: Package, label: 'Aset' },
+    { path: '/admin/penyusutan', icon: TrendingDown, label: 'Penyusutan Aset', badge: 'Soon' },
     { path: '/admin/polygons', icon: Map, label: 'Peta & Polygon' },
     { path: '/admin/schedules', icon: Calendar, label: 'Jadwal' },
+    { path: '/admin/auctions', icon: Gavel, label: 'E-Tender' },
 ];
 
 export const AdminLayout: React.FC = () => {
@@ -62,7 +77,7 @@ export const AdminLayout: React.FC = () => {
                     </div>
                     {sidebarOpen && (
                         <div className="overflow-hidden">
-                            <h1 className="text-lg font-bold text-white whitespace-nowrap">SIDIA</h1>
+                            <h1 className="text-lg font-bold text-white whitespace-nowrap">SIAU</h1>
                             <p className="text-xs text-slate-400 whitespace-nowrap">Admin Panel</p>
                         </div>
                     )}
@@ -83,7 +98,16 @@ export const AdminLayout: React.FC = () => {
                             }
                         >
                             <item.icon size={20} className="flex-shrink-0" />
-                            {sidebarOpen && <span className="whitespace-nowrap">{item.label}</span>}
+                            {sidebarOpen && (
+                                <span className="whitespace-nowrap flex-1 flex items-center justify-between gap-2">
+                                    <span>{item.label}</span>
+                                    {item.badge && (
+                                        <span className="rounded-full bg-teal-500/20 text-teal-300 px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase">
+                                            {item.badge}
+                                        </span>
+                                    )}
+                                </span>
+                            )}
                         </NavLink>
                     ))}
                 </nav>

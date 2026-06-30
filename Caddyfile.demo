@@ -1,0 +1,30 @@
+# Single-origin reverse proxy for the SIAU demo (behind ngrok).
+# TLS is terminated at the ngrok edge, so Caddy serves plain HTTP on :8080.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	encode gzip
+
+	# API + Sanctum → Laravel backend (which proxies /api/v1/siau to the gateway)
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle /sanctum/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Uploaded files (auction images, etc.) served by Laravel's storage symlink
+	handle /storage/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Everything else → built SPA, with client-side routing fallback to index.html
+	handle {
+		root * /Users/aryakrisnadinathaa/WorkDD/Unud/sidia-remake/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

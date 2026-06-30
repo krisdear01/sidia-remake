@@ -1,334 +1,444 @@
-import React, { useState, useEffect } from 'react';
-import { roomsApi, buildingsApi } from '../api/client';
-import { Plus, Pencil, Trash2, Loader2, Search, DoorOpen } from 'lucide-react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import {
+    DoorOpen, Search, Loader2, AlertCircle, ShieldAlert, Building2, CheckCircle2,
+    Filter, X, ChevronRight, Users, ArrowUp, ArrowDown, ArrowUpDown, Globe, Lock,
+} from 'lucide-react';
+import { siauApi, adminSiauApi, SiauApiError } from '../api/client';
+import type { SiauRoom, SiauBuilding } from '../types';
+import { Paginator, PAGE_SIZE_OPTIONS } from '../components/Paginator';
+import { SiauRoomModal } from '../components/SiauRoomModal';
 
-interface Room {
-    id: number;
-    name: string;
-    code: string;
-    building?: { name: string; faculty?: { name: string } };
-    floor: number;
-    capacity: number;
-    status: 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE';
-    current_activity?: string;
-}
+/**
+ * Admin → Ruangan
+ *
+ * Read-only directory of SIISYANA rooms via the SIAU Gateway. Previously
+ * read SIDIA's local SQLite (28 seeded rows with full CRUD); now reads the
+ * authoritative ~2,672 SIISYANA rooms. Clicking a row opens SiauRoomModal
+ * for assets/schedule/availability. Distinct from /admin/assets which
+ * focuses on browsing the assets in each room.
+ */
+
+const FETCH_BATCH_LIMIT = 200;
 
 export const RoomsPage: React.FC = () => {
-    const [rooms, setRooms] = useState<Room[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [search, setSearch] = useState('');
-    const [showModal, setShowModal] = useState(false);
-    const [editingRoom, setEditingRoom] = useState<Room | null>(null);
-    const [buildings, setBuildings] = useState<any[]>([]);
+    const [allRooms, setAllRooms] = useState<SiauRoom[]>([]);
+    const [bulkLoading, setBulkLoading] = useState(true);
+    const [bulkProgress, setBulkProgress] = useState(0);
+    const [bulkError, setBulkError] = useState<string | null>(null);
+    const fetchTokenRef = useRef(0);
 
+    const [buildings, setBuildings] = useState<SiauBuilding[]>([]);
+    const [filterBuildingId, setFilterBuildingId] = useState<string>('');
+    const [search, setSearch] = useState('');
+    const [showFilters, setShowFilters] = useState(true);
+
+    const [pageSize, setPageSize] = useState<number>(10);
+    const [pageIndex, setPageIndex] = useState<number>(0);
+    const [selectedRoom, setSelectedRoom] = useState<SiauRoom | null>(null);
+
+    // Per-row visibility toggle pending state, keyed by room id.
+    const [visPending, setVisPending] = useState<Record<string, boolean>>({});
+    const [visError, setVisError] = useState<string | null>(null);
+
+    // Sort by asset_count. Default 'desc' (most assets first).
+    // Cycles on header click: desc → asc → null (natural order).
+    const [sortDir, setSortDir] = useState<'desc' | 'asc' | null>('desc');
+    const toggleAssetSort = () => {
+        setSortDir((d) => (d === 'desc' ? 'asc' : d === 'asc' ? null : 'desc'));
+        setPageIndex(0);
+    };
+
+    const friendlyError = (e: unknown): string => {
+        if (e instanceof SiauApiError) {
+            if (e.status === 503 || e.code === 'SIAU_GATEWAY_UNREACHABLE')
+                return 'Layanan direktori sedang tidak tersedia.';
+            if (e.status === 429) return 'Terlalu banyak permintaan. Tunggu sebentar.';
+        }
+        return 'Tidak dapat memuat data dari gateway.';
+    };
+
+    // Buildings (for the Gedung dropdown)
     useEffect(() => {
-        loadData();
+        siauApi.buildings.list({ limit: 200 })
+            .then((res) => setBuildings(res.data))
+            .catch(() => setBuildings([]));
     }, []);
 
-    const loadData = async () => {
+    // Bulk fetch rooms — walks the cursor.
+    const bulkFetch = useCallback(async () => {
+        const token = ++fetchTokenRef.current;
+        setBulkLoading(true);
+        setBulkError(null);
+        setBulkProgress(0);
+        setAllRooms([]);
+
+        let cursor: number | null = null;
+        const accumulator: SiauRoom[] = [];
         try {
-            setLoading(true);
-            const [roomsRes, buildingsRes] = await Promise.all([
-                roomsApi.list({ per_page: 100 }),
-                buildingsApi.list({ per_page: 100 }),
-            ]);
-            setRooms(roomsRes.data || []);
-            setBuildings(buildingsRes.data || []);
-        } catch (error) {
-            console.error('Failed to load data:', error);
+            for (let i = 0; i < 100; i++) {
+                const params: { limit: number; cursor?: number; id_gedung?: number } = {
+                    limit: FETCH_BATCH_LIMIT,
+                };
+                if (cursor !== null) params.cursor = cursor;
+                if (filterBuildingId) params.id_gedung = Number(filterBuildingId);
+                const res = await siauApi.rooms.list(params);
+                if (token !== fetchTokenRef.current) return;
+                accumulator.push(...res.data);
+                setAllRooms([...accumulator]);
+                setBulkProgress(accumulator.length);
+                const next = res.meta.pagination?.next_cursor ?? null;
+                if (next === null) break;
+                cursor = next;
+            }
+        } catch (e) {
+            if (token === fetchTokenRef.current) setBulkError(friendlyError(e));
         } finally {
-            setLoading(false);
+            if (token === fetchTokenRef.current) setBulkLoading(false);
         }
+    }, [filterBuildingId]);
+
+    useEffect(() => { bulkFetch(); }, [bulkFetch]);
+
+    useEffect(() => { setPageIndex(0); }, [filterBuildingId, search, pageSize]);
+
+    const filtered = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        const base = !q ? allRooms : allRooms.filter((r) =>
+            r.nama.toLowerCase().includes(q) ||
+            r.kode_ruangan.toLowerCase().includes(q) ||
+            (r.gedung?.nama ?? '').toLowerCase().includes(q) ||
+            (r.jenis_ruangan?.nama ?? '').toLowerCase().includes(q)
+        );
+        if (sortDir === null) return base;
+        const withIndex = base.map((r, i) => ({ r, i }));
+        withIndex.sort((a, b) => {
+            const av = a.r.asset_count ?? 0;
+            const bv = b.r.asset_count ?? 0;
+            const diff = sortDir === 'desc' ? bv - av : av - bv;
+            return diff !== 0 ? diff : a.i - b.i;
+        });
+        return withIndex.map((x) => x.r);
+    }, [allRooms, search, sortDir]);
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const safePageIndex = Math.min(pageIndex, totalPages - 1);
+    const pageRows = filtered.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize);
+
+    const activeFilterCount = (filterBuildingId ? 1 : 0) + (search.trim() ? 1 : 0);
+
+    const clearFilters = () => {
+        setFilterBuildingId('');
+        setSearch('');
     };
 
-    const handleSearch = async () => {
+    const handleToggleVisibility = async (room: SiauRoom, e: React.MouseEvent) => {
+        e.stopPropagation();
+        const target = !room.is_public;
+        setVisError(null);
+        setVisPending((p) => ({ ...p, [room.id]: true }));
+        // Optimistic update.
+        setAllRooms((prev) => prev.map((r) => (r.id === room.id ? { ...r, is_public: target } : r)));
         try {
-            setLoading(true);
-            const res = await roomsApi.list({ search, per_page: 100 });
-            setRooms(res.data || []);
-        } catch (error) {
-            console.error('Search failed:', error);
+            await adminSiauApi.rooms.setVisibility(room.id, target);
+        } catch (err) {
+            // Rollback on failure.
+            setAllRooms((prev) => prev.map((r) => (r.id === room.id ? { ...r, is_public: !target } : r)));
+            setVisError(`Gagal mengubah visibilitas ${room.kode_ruangan}.`);
         } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleDelete = async (id: number) => {
-        if (!confirm('Yakin ingin menghapus ruangan ini?')) return;
-        try {
-            await roomsApi.delete(id);
-            loadData();
-        } catch (error) {
-            alert('Gagal menghapus: ' + (error as Error).message);
-        }
-    };
-
-    const getStatusBadge = (status: string) => {
-        switch (status) {
-            case 'AVAILABLE':
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">Tersedia</span>;
-            case 'OCCUPIED':
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-rose-100 text-rose-700">Digunakan</span>;
-            case 'MAINTENANCE':
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-700">Perbaikan</span>;
-            default:
-                return null;
+            setVisPending((p) => {
+                const { [room.id]: _, ...rest } = p;
+                return rest;
+            });
         }
     };
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Manajemen Ruangan</h1>
-                    <p className="text-slate-500">Kelola data ruangan universitas</p>
-                </div>
+        <div className="space-y-5">
+            <div>
+                <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <DoorOpen className="text-blue-600" /> Direktori Ruangan
+                </h1>
+                <p className="text-slate-500">
+                    Daftar ruangan Universitas Udayana dari SIISYANA melalui SIAU Gateway.
+                </p>
+            </div>
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 flex items-center gap-2 text-sm text-amber-900">
+                <ShieldAlert size={16} className="shrink-0" />
+                <span>Data ruangan SIISYANA bersifat <b>read-only</b>. Untuk perubahan, gunakan aplikasi SI-ISYANA.</span>
+            </div>
+
+            {/* Filter card */}
+            <div className="rounded-2xl bg-white shadow-sm border border-slate-200 overflow-hidden">
                 <button
-                    onClick={() => { setEditingRoom(null); setShowModal(true); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-500/20 transition-all"
+                    onClick={() => setShowFilters((v) => !v)}
+                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
                 >
-                    <Plus size={18} />
-                    Tambah Ruangan
+                    <div className="flex items-center gap-2">
+                        <Filter size={18} className="text-slate-500" />
+                        <span className="font-semibold text-slate-900">Filter & Pencarian</span>
+                        {activeFilterCount > 0 && (
+                            <span className="inline-flex items-center justify-center rounded-full bg-blue-100 text-blue-700 text-xs font-semibold w-6 h-6">
+                                {activeFilterCount}
+                            </span>
+                        )}
+                    </div>
+                    <ChevronRight
+                        size={18}
+                        className={`text-slate-400 transition-transform ${showFilters ? 'rotate-90' : ''}`}
+                    />
                 </button>
-            </div>
 
-            {/* Search */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-                <div className="flex gap-2">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Cari ruangan..."
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                            className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                    </div>
-                    <button onClick={handleSearch} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium">
-                        Cari
-                    </button>
-                </div>
-            </div>
+                {showFilters && (
+                    <div className="p-4 border-t border-slate-100 space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">Gedung</label>
+                                <select
+                                    value={filterBuildingId}
+                                    onChange={(e) => setFilterBuildingId(e.target.value)}
+                                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-blue-500"
+                                >
+                                    <option value="">— Semua Gedung —</option>
+                                    {buildings.map((b) => (
+                                        <option key={b.id} value={b.id}>{b.nama}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">Cari Ruangan</label>
+                                <div className="relative">
+                                    <Search className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        placeholder="kode, nama, gedung, atau tipe..."
+                                        className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2.5 pl-9 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-blue-500"
+                                    />
+                                </div>
+                            </div>
+                        </div>
 
-            {/* Table */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                {loading ? (
-                    <div className="flex items-center justify-center h-64">
-                        <Loader2 className="animate-spin text-blue-600" size={32} />
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                            <thead className="bg-slate-50 border-b border-slate-200">
-                                <tr>
-                                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Ruangan</th>
-                                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Gedung</th>
-                                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-center">Kapasitas</th>
-                                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-center">Status</th>
-                                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">Aktivitas</th>
-                                    <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {rooms.map((room) => (
-                                    <tr key={room.id} className="hover:bg-slate-50">
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2 bg-indigo-100 rounded-lg">
-                                                    <DoorOpen className="text-indigo-600" size={18} />
-                                                </div>
-                                                <div>
-                                                    <p className="font-semibold text-slate-900">{room.name}</p>
-                                                    <p className="text-xs text-slate-500">{room.code} • Lantai {room.floor}</p>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <p className="text-slate-600">{room.building?.name || '-'}</p>
-                                            <p className="text-xs text-slate-400">{room.building?.faculty?.name}</p>
-                                        </td>
-                                        <td className="px-6 py-4 text-center text-slate-600">{room.capacity}</td>
-                                        <td className="px-6 py-4 text-center">{getStatusBadge(room.status)}</td>
-                                        <td className="px-6 py-4 text-slate-600 max-w-[200px] truncate">
-                                            {room.current_activity || '-'}
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    onClick={() => { setEditingRoom(room); setShowModal(true); }}
-                                                    className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-blue-600"
-                                                >
-                                                    <Pencil size={16} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDelete(room.id)}
-                                                    className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-rose-600"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                                {rooms.length === 0 && (
-                                    <tr>
-                                        <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
-                                            Tidak ada data ruangan
-                                        </td>
-                                    </tr>
+                        {activeFilterCount > 0 && (
+                            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                                <span className="text-xs text-slate-500">Filter aktif:</span>
+                                {filterBuildingId && (
+                                    <FilterChip
+                                        label={`Gedung: ${buildings.find((b) => b.id === filterBuildingId)?.nama ?? filterBuildingId}`}
+                                        onClear={() => setFilterBuildingId('')}
+                                    />
                                 )}
-                            </tbody>
-                        </table>
+                                {search.trim() && (
+                                    <FilterChip label={`Cari: ${search}`} onClear={() => setSearch('')} />
+                                )}
+                                <button
+                                    onClick={clearFilters}
+                                    className="text-xs text-rose-600 hover:text-rose-700 font-medium ml-auto"
+                                >
+                                    Bersihkan semua
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
 
-            {/* Modal */}
-            {showModal && (
-                <RoomModal
-                    room={editingRoom}
-                    buildings={buildings}
-                    onClose={() => setShowModal(false)}
-                    onSave={() => { setShowModal(false); loadData(); }}
+            {visError && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 flex items-center gap-2 text-sm text-rose-800">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <span className="flex-1">{visError}</span>
+                    <button onClick={() => setVisError(null)} className="text-rose-600 hover:text-rose-700">
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
+            {bulkError && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 flex items-start gap-3">
+                    <AlertCircle className="text-rose-600 shrink-0 mt-0.5" size={20} />
+                    <div className="flex-1">
+                        <p className="font-semibold text-rose-900">Tidak dapat memuat daftar ruangan</p>
+                        <p className="text-sm text-rose-700">{bulkError}</p>
+                    </div>
+                    <button onClick={bulkFetch} className="rounded-lg bg-rose-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-rose-700">
+                        Coba lagi
+                    </button>
+                </div>
+            )}
+
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3">
+                        <h2 className="font-semibold text-slate-900">Daftar Ruangan</h2>
+                        {bulkLoading && (
+                            <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                                <Loader2 size={12} className="animate-spin" />
+                                memuat {bulkProgress}...
+                            </span>
+                        )}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-slate-500">
+                        <span>Tampilkan</span>
+                        <select
+                            value={pageSize}
+                            onChange={(e) => setPageSize(Number(e.target.value))}
+                            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+                        >
+                            {PAGE_SIZE_OPTIONS.map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                            ))}
+                        </select>
+                        <span>per halaman</span>
+                    </label>
+                </div>
+
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
+                                <th className="px-4 py-3 font-semibold">Kode</th>
+                                <th className="px-4 py-3 font-semibold">Nama Ruangan</th>
+                                <th className="px-4 py-3 font-semibold">Gedung</th>
+                                <th className="px-4 py-3 font-semibold">Tipe</th>
+                                <th className="px-4 py-3 font-semibold text-right">Kapasitas</th>
+                                <th className="px-4 py-3 font-semibold text-center">Validasi</th>
+                                <th className="px-4 py-3 font-semibold text-center">Akses</th>
+                                <th className="px-4 py-3 font-semibold text-right">
+                                    <button
+                                        onClick={toggleAssetSort}
+                                        className="inline-flex items-center gap-1 hover:text-slate-700 transition-colors"
+                                        aria-label={`Urutkan berdasarkan jumlah aset${sortDir ? ` (${sortDir === 'desc' ? 'terbanyak ke tersedikit' : 'tersedikit ke terbanyak'})` : ''}`}
+                                    >
+                                        Aset
+                                        {sortDir === 'desc' ? (
+                                            <ArrowDown size={12} className="text-blue-600" />
+                                        ) : sortDir === 'asc' ? (
+                                            <ArrowUp size={12} className="text-blue-600" />
+                                        ) : (
+                                            <ArrowUpDown size={12} className="opacity-40" />
+                                        )}
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {bulkLoading && allRooms.length === 0 ? (
+                                <tr><td colSpan={9} className="py-12 text-center text-slate-400">
+                                    <Loader2 className="inline animate-spin text-blue-600 mr-2" size={18} />
+                                    Memuat ruangan dari gateway...
+                                </td></tr>
+                            ) : pageRows.length === 0 ? (
+                                <tr><td colSpan={9} className="py-12 text-center text-slate-400">
+                                    {bulkError ? '—' : activeFilterCount > 0 ? 'Tidak ada ruangan yang cocok dengan filter.' : 'Tidak ada ruangan ditemukan.'}
+                                </td></tr>
+                            ) : (
+                                pageRows.map((r) => (
+                                    <tr
+                                        key={r.id}
+                                        onClick={() => setSelectedRoom(r)}
+                                        className="group cursor-pointer hover:bg-slate-50"
+                                    >
+                                        <td className="px-4 py-3 font-mono text-xs text-slate-700">{r.kode_ruangan}</td>
+                                        <td className="px-4 py-3 font-semibold text-slate-900">{r.nama}</td>
+                                        <td className="px-4 py-3 text-slate-600">
+                                            <div className="flex items-center gap-1">
+                                                <Building2 size={14} className="text-slate-400" />
+                                                <span className="line-clamp-1">{r.gedung?.nama ?? '—'}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-slate-600">{r.jenis_ruangan?.nama ?? '—'}</td>
+                                        <td className="px-4 py-3 text-right text-slate-700">
+                                            {r.kapasitas != null ? (
+                                                <span className="inline-flex items-center gap-1 justify-end">
+                                                    <Users size={12} className="text-slate-400" />
+                                                    {r.kapasitas}
+                                                </span>
+                                            ) : <span className="text-slate-300">—</span>}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            {r.status_validasi === 'validated' ? (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-xs font-medium">
+                                                    <CheckCircle2 size={12} /> Tervalidasi
+                                                </span>
+                                            ) : r.status_validasi === 'pending' ? (
+                                                <span className="inline-flex rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs font-medium">
+                                                    Menunggu
+                                                </span>
+                                            ) : (
+                                                <span className="text-slate-300 text-xs">—</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            <button
+                                                onClick={(e) => handleToggleVisibility(r, e)}
+                                                disabled={!!visPending[r.id]}
+                                                aria-label={`Ubah akses ${r.kode_ruangan} (saat ini ${r.is_public ? 'publik' : 'privat'})`}
+                                                title={r.is_public
+                                                    ? 'Publik — klik untuk jadikan privat'
+                                                    : 'Privat — klik untuk jadikan publik'}
+                                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-colors ${
+                                                    r.is_public
+                                                        ? 'bg-sky-100 text-sky-700 hover:bg-sky-200'
+                                                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                                } ${visPending[r.id] ? 'opacity-60 cursor-wait' : ''}`}
+                                            >
+                                                {visPending[r.id]
+                                                    ? <Loader2 size={12} className="animate-spin" />
+                                                    : r.is_public
+                                                        ? <Globe size={12} />
+                                                        : <Lock size={12} />}
+                                                {r.is_public ? 'Publik' : 'Privat'}
+                                            </button>
+                                        </td>
+                                        <td className="px-4 py-3 text-right text-slate-700 font-medium">
+                                            <span className={(r.asset_count ?? 0) === 0 ? 'text-slate-400' : ''}>
+                                                {r.asset_count ?? 0}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                            <ChevronRight size={18} className="text-slate-300 group-hover:text-blue-600" />
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                <Paginator
+                    pageIndex={safePageIndex}
+                    totalPages={totalPages}
+                    totalItems={filtered.length}
+                    pageSize={pageSize}
+                    isLoading={bulkLoading}
+                    onJump={setPageIndex}
+                    label="ruangan"
                 />
+            </div>
+
+            {selectedRoom && (
+                <SiauRoomModal room={selectedRoom} onClose={() => setSelectedRoom(null)} />
             )}
         </div>
     );
 };
 
-// Room Modal Component
-interface RoomModalProps {
-    room: Room | null;
-    buildings: any[];
-    onClose: () => void;
-    onSave: () => void;
+interface FilterChipProps {
+    label: string;
+    onClear: () => void;
 }
 
-const RoomModal: React.FC<RoomModalProps> = ({ room, buildings, onClose, onSave }) => {
-    const [formData, setFormData] = useState({
-        name: room?.name || '',
-        code: room?.code || '',
-        building_id: '',
-        floor: room?.floor || 1,
-        capacity: room?.capacity || 0,
-        status: room?.status || 'AVAILABLE',
-        current_activity: room?.current_activity || '',
-        description: '',
-    });
-    const [saving, setSaving] = useState(false);
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        try {
-            setSaving(true);
-            if (room) {
-                await roomsApi.update(room.id, formData);
-            } else {
-                await roomsApi.create(formData);
-            }
-            onSave();
-        } catch (error) {
-            alert('Gagal menyimpan: ' + (error as Error).message);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
-                <div className="p-6 border-b border-slate-200">
-                    <h2 className="text-xl font-bold text-slate-900">
-                        {room ? 'Edit Ruangan' : 'Tambah Ruangan'}
-                    </h2>
-                </div>
-                <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="col-span-2">
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Nama Ruangan</label>
-                            <input
-                                type="text"
-                                value={formData.name}
-                                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                required
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Kode</label>
-                            <input
-                                type="text"
-                                value={formData.code}
-                                onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                required
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Gedung</label>
-                            <select
-                                value={formData.building_id}
-                                onChange={(e) => setFormData({ ...formData, building_id: e.target.value })}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                required
-                            >
-                                <option value="">-- Pilih Gedung --</option>
-                                {buildings.map((b: any) => (
-                                    <option key={b.id} value={b.id}>{b.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Lantai</label>
-                            <input
-                                type="number"
-                                value={formData.floor}
-                                onChange={(e) => setFormData({ ...formData, floor: parseInt(e.target.value) })}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                min={1}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Kapasitas</label>
-                            <input
-                                type="number"
-                                value={formData.capacity}
-                                onChange={(e) => setFormData({ ...formData, capacity: parseInt(e.target.value) })}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                                min={0}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                            <select
-                                value={formData.status}
-                                onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                            >
-                                <option value="AVAILABLE">Tersedia</option>
-                                <option value="OCCUPIED">Digunakan</option>
-                                <option value="MAINTENANCE">Perbaikan</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div className="flex justify-end gap-3 pt-4">
-                        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50">
-                            Batal
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
-                        >
-                            {saving && <Loader2 className="animate-spin" size={16} />}
-                            Simpan
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    );
-};
+const FilterChip: React.FC<FilterChipProps> = ({ label, onClear }) => (
+    <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 text-xs font-medium pl-2 pr-1 py-1">
+        {label}
+        <button
+            onClick={onClear}
+            className="rounded-full hover:bg-blue-200 p-0.5"
+            aria-label={`Hapus ${label}`}
+        >
+            <X size={12} />
+        </button>
+    </span>
+);

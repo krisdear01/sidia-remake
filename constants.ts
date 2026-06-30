@@ -1,5 +1,14 @@
 import { Room, RoomStatus } from './types';
 
+// Gateway has no server-side filter for `id_jenis_ruangan`. We pull rooms then
+// keep only those whose `jenis_ruangan.nama` matches one of these tokens (case-insensitive).
+export const LAB_JENIS_RUANGAN = ['lab', 'laboratorium'];
+export const MEETING_JENIS_RUANGAN = ['ruang rapat', 'ruang sidang', 'meeting'];
+
+// UPT Perpustakaan unit id in SIISYANA (confirmed in PRD).
+export const UPT_PERPUSTAKAAN_UNIT_ID = 21;
+
+
 export const MOCK_ROOMS: Room[] = [
   {
     id: '1',

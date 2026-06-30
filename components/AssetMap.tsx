@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
+import { MapDetailModal } from './MapDetailModal';
+import { siauApi } from '../api/client';
+import type { PolygonFeatureProperties } from '../types';
+
+const fmtM2 = (n: any) => (n == null ? '-' : `${Number(n).toLocaleString('id-ID')} M²`);
+const esc = (s: any) =>
+  String(s ?? '-').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 // Unit/Faculty configuration with colors matching the reference image
 const UNIT_CONFIG = {
@@ -41,21 +48,142 @@ const createShpToUnitMap = () => {
 
 const SHP_TO_UNIT = createShpToUnitMap();
 
-export const AssetMap: React.FC = () => {
+interface AssetMapProps {
+  /** Homepage map: show only land/tanah parcels, hide building-linked polygons. */
+  landOnly?: boolean;
+}
+
+export const AssetMap: React.FC<AssetMapProps> = ({ landOnly = false }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
+  const drawGroupRef = useRef<L.LayerGroup | null>(null);
+  const selectedLayerRef = useRef<L.Layer | null>(null);
   const initialBoundsSet = useRef(false);
-  const [selectedUnits, setSelectedUnits] = useState<Set<UnitName>>(new Set());
+  const [selectedFaculties, setSelectedFaculties] = useState<Set<string>>(new Set());
   const [geoJsonData, setGeoJsonData] = useState<any>(null);
   const [hoveredFeature, setHoveredFeature] = useState<string | null>(null);
 
-  // Load GeoJSON data
+  // Detail modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalFeature, setModalFeature] = useState<PolygonFeatureProperties | null>(null);
+  const [modalCentroid, setModalCentroid] = useState<[number, number] | null>(null);
+
+  // Open the detail modal for a clicked polygon, remembering its layer so the
+  // modal's "Lihat" action can fit the map to its bounds.
+  const openDetail = (props: any, layer: L.Layer) => {
+    selectedLayerRef.current = layer;
+    const c = (layer as any).getBounds?.().getCenter?.();
+    setModalCentroid(c ? [c.lat, c.lng] : null);
+    setModalFeature(props as PolygonFeatureProperties);
+    setModalOpen(true);
+    mapRef.current?.closePopup();
+  };
+
+  const handleLihat = () => {
+    const layer: any = selectedLayerRef.current;
+    if (layer?.getBounds && mapRef.current) {
+      mapRef.current.fitBounds(layer.getBounds(), { padding: [40, 40] });
+      setModalOpen(false);
+    }
+  };
+
+  // Build the click popup: shows legacy-style metadata (fetched live from
+  // SIISYANA when the polygon is linked) plus a "Lihat Detail" button.
+  const openPopup = (props: any, layer: L.Layer) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const center = (layer as any).getBounds().getCenter();
+    const el = document.createElement('div');
+    el.style.minWidth = '220px';
+    el.innerHTML = `<div style="font-weight:700;font-size:14px;margin-bottom:6px">${esc(props.name)}</div>
+      <div style="color:#64748b;font-size:12px">Memuat data...</div>`;
+
+    const popup = L.popup({ maxWidth: 280 }).setLatLng(center).setContent(el).openOn(map);
+
+    const renderRows = (rows: [string, any][]) =>
+      rows.map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px solid #f1f5f9">
+        <span style="color:#64748b;font-size:12px">${k}</span>
+        <span style="font-weight:600;font-size:12px;text-align:right">${esc(v)}</span></div>`).join('');
+
+    const mount = (titleHtml: string, rowsHtml: string) => {
+      el.innerHTML = `<div style="font-weight:700;font-size:14px;margin-bottom:6px">${titleHtml}</div>${rowsHtml}`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Lihat Detail';
+      btn.style.cssText = 'margin-top:10px;width:100%;background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px;font-size:13px;font-weight:600;cursor:pointer';
+      btn.onclick = () => openDetail(props, layer);
+      el.appendChild(btn);
+      popup.update();
+    };
+
+    const type = props.asset_type;
+    const sid = type === 'bangunan' ? props.siisyana_gedung_id : type === 'tanah' ? props.siisyana_tanah_id : null;
+
+    if (!type || !sid) {
+      mount(esc(props.name), renderRows([['Luas', fmtM2(props.land_area)]]));
+      return;
+    }
+
+    if (type === 'tanah') {
+      siauApi.land.get(sid).then((r: any) => {
+        const d = r.data;
+        mount(esc(props.name), renderRows([
+          ['Bukti Kepemilikan', d.bukti_kepemilikan],
+          ['Nomor KIB', d.nomor_kib],
+          ['Luas Total', fmtM2(d.luas_total)],
+          ['Luas Tidak Terpakai', fmtM2(d.luas_tidak_terpakai)],
+        ]));
+      }).catch(() => mount(esc(props.name), renderRows([['Luas', fmtM2(props.land_area)]])));
+    } else {
+      siauApi.buildings.get(sid).then((r: any) => {
+        const d = r.data;
+        mount(esc(d.nama || props.name), renderRows([
+          ['Kode Aset', d.kode],
+          ['Nomor KIB', d.nomor_kib],
+          ['Nama Gedung', d.nama],
+          ['Luas Gedung', fmtM2(d.luas_gedung)],
+        ]));
+      }).catch(() => mount(esc(props.name), renderRows([['Luas', fmtM2(props.land_area)]])));
+    }
+  };
+
+  // Load GeoJSON data - try API first, fallback to static file
   useEffect(() => {
-    fetch('/DataPolygon_SHP_Unud.geojson')
-      .then(res => res.json())
-      .then(data => setGeoJsonData(data))
-      .catch(err => console.error('Failed to load GeoJSON:', err));
+    const loadGeoJSON = async () => {
+      try {
+        // First, try to load from API (imported polygons)
+        console.log('[AssetMap] Fetching GeoJSON from API...');
+        const apiResponse = await fetch('http://localhost:8000/api/v1/polygons/geojson');
+        if (apiResponse.ok) {
+          const apiData = await apiResponse.json();
+          console.log('[AssetMap] API Response:', {
+            type: apiData.type,
+            featureCount: apiData.features?.length || 0
+          });
+          // If API has features, use them; otherwise fallback to static
+          if (apiData.features && apiData.features.length > 0) {
+            console.log('[AssetMap] Using API data with', apiData.features.length, 'features');
+            setGeoJsonData(apiData);
+            return;
+          }
+        }
+      } catch (err) {
+        console.log('[AssetMap] API not available, falling back to static file:', err);
+      }
+
+      // Fallback to static GeoJSON file
+      try {
+        console.log('[AssetMap] Fetching static GeoJSON file...');
+        const res = await fetch('/DataPolygon_SHP_Unud.geojson');
+        const data = await res.json();
+        console.log('[AssetMap] Static file loaded:', data.features?.length, 'features');
+        setGeoJsonData(data);
+      } catch (err) {
+        console.error('[AssetMap] Failed to load GeoJSON:', err);
+      }
+    };
+
+    loadGeoJSON();
   }, []);
 
   // Initialize map
@@ -69,16 +197,37 @@ export const AssetMap: React.FC = () => {
       zoomControl: false,
     });
 
-    // Add tile layer (OpenStreetMap)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // Base layers (legacy parity: OSM + Google satellite)
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
     }).addTo(map);
 
-    // Add zoom control at bottom left
+    const google = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+      attribution: '&copy; Google',
+      maxZoom: 21,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    });
+
+    // Persistent overlay group ("drawlayer") that holds the polygon GeoJSON.
+    const drawGroup = L.layerGroup().addTo(map);
+    drawGroupRef.current = drawGroup;
+
+    L.control.layers(
+      { osm, google },
+      { drawlayer: drawGroup },
+      { position: 'topleft', collapsed: false }
+    ).addTo(map);
+
+    // Add zoom control at top left
     L.control.zoom({ position: 'topleft' }).addTo(map);
 
     mapRef.current = map;
+
+    // Invalidate size after a short delay to ensure proper rendering
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
 
     return () => {
       map.remove();
@@ -90,93 +239,154 @@ export const AssetMap: React.FC = () => {
   useEffect(() => {
     if (!mapRef.current || !geoJsonData) return;
 
-    // Remove existing layer
+    // Remove existing layer from the drawlayer overlay group
     if (geoJsonLayerRef.current) {
-      mapRef.current.removeLayer(geoJsonLayerRef.current);
+      drawGroupRef.current?.removeLayer(geoJsonLayerRef.current);
     }
 
-    // Filter features if units are selected
-    const filteredData = selectedUnits.size > 0
+    // Homepage shows land/tanah only: drop polygons linked to a building.
+    const baseData = landOnly
+      ? { ...geoJsonData, features: geoJsonData.features.filter((f: any) => f.properties?.asset_type !== 'bangunan') }
+      : geoJsonData;
+
+    // Filter features if faculties are selected
+    const filteredData = selectedFaculties.size > 0
       ? {
-        ...geoJsonData,
-        features: geoJsonData.features.filter((f: any) => {
-          const shp = f.properties?.['NO.SHP'];
-          const unit = SHP_TO_UNIT[shp];
-          return unit && selectedUnits.has(unit);
+        ...baseData,
+        features: baseData.features.filter((f: any) => {
+          const props = f.properties;
+          // Check if this is API data (has fill_color/faculty) or static data (has NO.SHP)
+          const isApiData = 'fill_color' in props;
+
+          if (isApiData) {
+            // API data: filter by polygon name (each zone / each faculty is its own legend row)
+            return selectedFaculties.has(props.name);
+          } else {
+            // Static data: filter by SHP to unit mapping
+            const shp = props?.['NO.SHP'];
+            const unit = SHP_TO_UNIT[shp];
+            return unit && selectedFaculties.has(unit);
+          }
         }),
       }
-      : geoJsonData;
+      : baseData;
 
     // Create GeoJSON layer
     const geoJsonLayer = L.geoJSON(filteredData, {
       style: (feature) => {
         if (!feature?.properties) return {};
-        const shp = feature.properties['NO.SHP'];
-        const unit = SHP_TO_UNIT[shp];
-        const config = unit ? UNIT_CONFIG[unit] : null;
-        const isSelected = selectedUnits.size === 0 || (unit && selectedUnits.has(unit));
-        const isHighlighted = hoveredFeature === shp;
 
-        return {
-          fillColor: config?.color || '#808080',
-          weight: isHighlighted ? 3 : 1,
-          opacity: 1,
-          color: isHighlighted ? '#000' : '#333',
-          fillOpacity: isSelected ? (isHighlighted ? 0.9 : 0.6) : 0.2,
-        };
+        // Check if this is API data (has fill_color) or static data (has NO.SHP)
+        const isApiData = 'fill_color' in feature.properties;
+
+        if (isApiData) {
+          // API polygon format
+          const props = feature.properties;
+          const featureId = props.id || props.name;
+          const isHighlighted = hoveredFeature === featureId;
+
+          return {
+            fillColor: props.fill_color || '#3b82f6',
+            weight: isHighlighted ? 3 : 2,
+            opacity: 1,
+            color: props.stroke_color || '#1d4ed8',
+            fillOpacity: isHighlighted ? 0.8 : (Number(props.fill_opacity) || 0.4),
+          };
+        } else {
+          // Static file format (NO.SHP based)
+          const shp = feature.properties['NO.SHP'];
+          const unit = SHP_TO_UNIT[shp];
+          const config = unit ? UNIT_CONFIG[unit] : null;
+          const isSelected = selectedFaculties.size === 0 || (unit && selectedFaculties.has(unit));
+          const isHighlighted = hoveredFeature === shp;
+
+          return {
+            fillColor: config?.color || '#808080',
+            weight: isHighlighted ? 3 : 1,
+            opacity: 1,
+            color: isHighlighted ? '#000' : '#333',
+            fillOpacity: isSelected ? (isHighlighted ? 0.9 : 0.6) : 0.2,
+          };
+        }
       },
       onEachFeature: (feature, layer) => {
-        const shp = feature.properties?.['NO.SHP'];
-        const unit = SHP_TO_UNIT[shp];
+        const props = feature.properties;
+        const isApiData = 'fill_color' in props;
 
-        layer.on({
-          mouseover: () => setHoveredFeature(shp),
-          mouseout: () => setHoveredFeature(null),
-          click: () => {
-            if (unit) {
-              L.popup()
-                .setLatLng((layer as any).getBounds().getCenter())
-                .setContent(`
-                  <div style="min-width: 150px;">
-                    <strong style="font-size: 14px;">${unit}</strong>
-                    <br/>
-                    <span style="color: #666; font-size: 12px;">ID: ${shp}</span>
-                  </div>
-                `)
-                .openOn(mapRef.current!);
-            }
-          },
-        });
+        if (isApiData) {
+          // API polygon format
+          const featureId = props.id || props.name;
+          const name = props.name || `Polygon ${props.id}`;
 
-        // Add tooltip
-        if (unit) {
-          layer.bindTooltip(unit, {
+          layer.on({
+            mouseover: () => setHoveredFeature(featureId),
+            mouseout: () => setHoveredFeature(null),
+            click: () => openPopup(props, layer),
+          });
+
+          layer.bindTooltip(name, {
             permanent: false,
             direction: 'center',
             className: 'unit-tooltip',
           });
+        } else {
+          // Static file format
+          const shp = props?.['NO.SHP'];
+          const unit = SHP_TO_UNIT[shp];
+
+          layer.on({
+            mouseover: () => setHoveredFeature(shp),
+            mouseout: () => setHoveredFeature(null),
+            click: () => openPopup({ ...props, name: unit || props?.['NO.SHP'] || 'Aset' }, layer),
+          });
+
+          // Add tooltip
+          if (unit) {
+            layer.bindTooltip(unit, {
+              permanent: false,
+              direction: 'center',
+              className: 'unit-tooltip',
+            });
+          }
         }
       },
     });
 
-    geoJsonLayer.addTo(mapRef.current);
+    drawGroupRef.current?.addLayer(geoJsonLayer);
     geoJsonLayerRef.current = geoJsonLayer;
 
-    // Fit bounds only on initial load (not on selection changes)
-    if (!initialBoundsSet.current && geoJsonLayer.getBounds().isValid()) {
-      mapRef.current.fitBounds(geoJsonLayer.getBounds(), { padding: [20, 20] });
-      initialBoundsSet.current = true;
+    // Log layer count for debugging
+    let layerCount = 0;
+    geoJsonLayer.eachLayer(() => layerCount++);
+    console.log('[AssetMap] Layer added. Total features rendered:', layerCount);
+    console.log('[AssetMap] Layer bounds:', geoJsonLayer.getBounds());
+
+    // Set initial view to Jimbaran campus (main campus with most polygons)
+    // Only on initial load, not on selection changes
+    if (!initialBoundsSet.current) {
+      setTimeout(() => {
+        if (!mapRef.current || initialBoundsSet.current) return;
+
+        // Center on Jimbaran campus at a zoom level that shows polygon details
+        const jimbaranCenter: [number, number] = [-8.7970, 115.1720];
+        const defaultZoom = 16;
+
+        console.log('[AssetMap] Setting view to Jimbaran campus:', jimbaranCenter, 'zoom:', defaultZoom);
+        mapRef.current.invalidateSize();
+        mapRef.current.setView(jimbaranCenter, defaultZoom);
+        initialBoundsSet.current = true;
+      }, 200);
     }
-  }, [geoJsonData, selectedUnits, hoveredFeature]);
+  }, [geoJsonData, selectedFaculties, hoveredFeature, landOnly]);
 
   // Handle legend item click
-  const handleLegendClick = (unit: UnitName) => {
-    setSelectedUnits(prev => {
+  const handleLegendClick = (faculty: string) => {
+    setSelectedFaculties(prev => {
       const next = new Set(prev);
-      if (next.has(unit)) {
-        next.delete(unit);
+      if (next.has(faculty)) {
+        next.delete(faculty);
       } else {
-        next.add(unit);
+        next.add(faculty);
       }
       return next;
     });
@@ -184,17 +394,64 @@ export const AssetMap: React.FC = () => {
 
   // Clear all selections
   const handleClearSelection = () => {
-    setSelectedUnits(new Set());
+    setSelectedFaculties(new Set());
   };
 
-  // Legend items sorted by display order
-  const legendItems = useMemo(() =>
-    Object.entries(UNIT_CONFIG).map(([name, config]) => ({
-      name: name as UnitName,
-      color: config.color,
-      count: config.shp.length,
-    })),
-    []);
+  // Build legend items from actual data (unique faculties with colors)
+  const legendItems = useMemo(() => {
+    if (!geoJsonData?.features) {
+      // Fallback to UNIT_CONFIG if no data loaded yet
+      return Object.entries(UNIT_CONFIG).map(([name, config]) => ({
+        name,
+        color: config.color,
+        count: config.shp.length,
+      }));
+    }
+
+    // Check if this is API data
+    const isApiData = geoJsonData.features.some((f: any) => 'fill_color' in f.properties);
+
+    if (isApiData) {
+      // Build one legend row per polygon NAME, keeping layer info for sectioning.
+      // Multiple polygons sharing a name (e.g. two "FEB" geometries) collapse
+      // into one row.
+      const itemMap = new Map<string, { color: string; count: number; layer: string }>();
+
+      geoJsonData.features.forEach((f: any) => {
+        const name = f.properties.name || 'Unnamed';
+        const layer = f.properties.layer || 'other';
+        const color = f.properties.fill_color || '#3b82f6';
+
+        if (itemMap.has(name)) {
+          itemMap.get(name)!.count++;
+        } else {
+          itemMap.set(name, { color, count: 1, layer });
+        }
+      });
+
+      // Sort: zona first, then sebaran_fakultas, then anything else; alphabetical within each.
+      const layerOrder: Record<string, number> = {
+        zona: 0,
+        sebaran_fakultas: 1,
+      };
+
+      return Array.from(itemMap.entries())
+        .map(([name, data]) => ({ name, color: data.color, count: data.count, layer: data.layer }))
+        .sort((a, b) => {
+          const la = layerOrder[a.layer] ?? 99;
+          const lb = layerOrder[b.layer] ?? 99;
+          if (la !== lb) return la - lb;
+          return a.name.localeCompare(b.name);
+        });
+    } else {
+      // Use UNIT_CONFIG for static data
+      return Object.entries(UNIT_CONFIG).map(([name, config]) => ({
+        name,
+        color: config.color,
+        count: config.shp.length,
+      }));
+    }
+  }, [geoJsonData]);
 
   return (
     <div className="space-y-4">
@@ -205,12 +462,12 @@ export const AssetMap: React.FC = () => {
             Luas Tanah Keseluruhan : <span className="font-mono font-medium text-slate-900">1.643.867 M²</span>
           </p>
         </div>
-        {selectedUnits.size > 0 && (
+        {selectedFaculties.size > 0 && (
           <button
             onClick={handleClearSelection}
             className="text-sm text-blue-600 hover:text-blue-800 font-medium"
           >
-            Tampilkan Semua ({selectedUnits.size} unit dipilih)
+            Tampilkan Semua ({selectedFaculties.size} unit dipilih)
           </button>
         )}
       </div>
@@ -225,38 +482,56 @@ export const AssetMap: React.FC = () => {
             <p className="text-xs text-slate-400 mt-0.5">Klik untuk menyorot</p>
           </div>
           <div className="max-h-[460px] overflow-y-auto p-2 space-y-0.5">
-            {legendItems.map((item) => {
-              const isSelected = selectedUnits.has(item.name);
-              const isActive = selectedUnits.size === 0 || isSelected;
+            {(() => {
+              const LAYER_LABELS: Record<string, string> = {
+                zona: 'Zona Kawasan',
+                sebaran_fakultas: 'Sebaran Fakultas',
+              };
+              let lastLayer: string | undefined;
+              return legendItems.map((item: any) => {
+                const isSelected = selectedFaculties.has(item.name);
+                const isActive = selectedFaculties.size === 0 || isSelected;
+                const showHeader = item.layer && item.layer !== lastLayer;
+                lastLayer = item.layer;
 
-              return (
-                <button
-                  key={item.name}
-                  onClick={() => handleLegendClick(item.name)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all ${isSelected
-                    ? 'bg-blue-50 ring-2 ring-blue-500'
-                    : isActive
-                      ? 'hover:bg-slate-50'
-                      : 'opacity-40 hover:opacity-60'
-                    }`}
-                >
-                  <div
-                    className="w-4 h-4 rounded flex-shrink-0 border border-slate-300"
-                    style={{ backgroundColor: item.color }}
-                  />
-                  <span className={`text-xs font-medium leading-tight ${isSelected ? 'text-blue-900' : 'text-slate-700'
-                    }`}>
-                    {item.name}
-                  </span>
-                </button>
-              );
-            })}
+                return (
+                  <React.Fragment key={item.name}>
+                    {showHeader && (
+                      <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {LAYER_LABELS[item.layer] ?? item.layer}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleLegendClick(item.name)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all ${isSelected
+                        ? 'bg-blue-50 ring-2 ring-blue-500'
+                        : isActive
+                          ? 'hover:bg-slate-50'
+                          : 'opacity-40 hover:opacity-60'
+                        }`}
+                    >
+                      <div
+                        className="w-4 h-4 rounded flex-shrink-0 border border-slate-300"
+                        style={{ backgroundColor: item.color }}
+                      />
+                      <span className={`text-xs font-medium leading-tight flex-1 ${isSelected ? 'text-blue-900' : 'text-slate-700'
+                        }`}>
+                        {item.name}
+                      </span>
+                      {item.count > 1 && (
+                        <span className="text-[10px] text-slate-400 font-mono">{item.count}</span>
+                      )}
+                    </button>
+                  </React.Fragment>
+                );
+              });
+            })()}
           </div>
         </div>
 
         {/* Map Container */}
-        <div className="flex-1 relative h-[500px] rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-          <div ref={mapContainerRef} className="absolute inset-0 z-0" />
+        <div className="flex-1 relative h-[500px] rounded-2xl border border-slate-200 overflow-hidden shadow-sm bg-slate-100">
+          <div ref={mapContainerRef} className="absolute inset-0 z-[1]" />
 
           {/* Loading state */}
           {!geoJsonData && (
@@ -289,6 +564,14 @@ export const AssetMap: React.FC = () => {
           border-radius: 8px;
         }
       `}</style>
+
+      <MapDetailModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        feature={modalFeature}
+        centroid={modalCentroid}
+        onLihat={handleLihat}
+      />
     </div>
   );
 };
