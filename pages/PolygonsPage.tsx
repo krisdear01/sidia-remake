@@ -10,6 +10,9 @@ interface Polygon {
     fill_opacity: number;
     land_area: number | null;
     is_active: boolean;
+    asset_type?: 'bangunan' | 'tanah' | null;
+    siisyana_gedung_id?: number | null;
+    siisyana_tanah_id?: number | null;
     faculty?: { id: number; name: string; color: string } | null;
     location?: { id: number; name: string } | null;
     geojson: any;
@@ -42,6 +45,9 @@ export const PolygonsPage: React.FC = () => {
         fill_opacity: 0.4,
         faculty_id: '',
         location_id: '',
+        asset_type: '',
+        siisyana_gedung_id: '',
+        siisyana_tanah_id: '',
     });
     const [saving, setSaving] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -181,6 +187,9 @@ export const PolygonsPage: React.FC = () => {
             fill_opacity: polygon.fill_opacity || 0.4,
             faculty_id: polygon.faculty?.id?.toString() || '',
             location_id: polygon.location?.id?.toString() || '',
+            asset_type: polygon.asset_type || '',
+            siisyana_gedung_id: polygon.siisyana_gedung_id?.toString() || '',
+            siisyana_tanah_id: polygon.siisyana_tanah_id?.toString() || '',
         });
         setShowEditModal(true);
     };
@@ -198,6 +207,11 @@ export const PolygonsPage: React.FC = () => {
                 fill_opacity: editForm.fill_opacity,
                 faculty_id: editForm.faculty_id ? parseInt(editForm.faculty_id) : null,
                 location_id: editForm.location_id ? parseInt(editForm.location_id) : null,
+                asset_type: editForm.asset_type || null,
+                siisyana_gedung_id: editForm.asset_type === 'bangunan' && editForm.siisyana_gedung_id
+                    ? parseInt(editForm.siisyana_gedung_id) : null,
+                siisyana_tanah_id: editForm.asset_type === 'tanah' && editForm.siisyana_tanah_id
+                    ? parseInt(editForm.siisyana_tanah_id) : null,
             });
             setShowEditModal(false);
             setEditingPolygon(null);
@@ -770,6 +784,58 @@ export const PolygonsPage: React.FC = () => {
                                         ))}
                                     </select>
                                 </div>
+                            </div>
+
+                            {/* SIISYANA linkage */}
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                                <p className="text-sm font-semibold text-slate-700">Tautan Data SIISYANA</p>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">
+                                            Tipe Aset
+                                        </label>
+                                        <select
+                                            value={editForm.asset_type}
+                                            onChange={(e) => setEditForm(f => ({ ...f, asset_type: e.target.value }))}
+                                            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                                        >
+                                            <option value="">-- Tidak ditautkan --</option>
+                                            <option value="bangunan">Bangunan (Gedung)</option>
+                                            <option value="tanah">Tanah</option>
+                                        </select>
+                                    </div>
+                                    {editForm.asset_type === 'bangunan' && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                                                ID Gedung SIISYANA
+                                            </label>
+                                            <input
+                                                type="number"
+                                                value={editForm.siisyana_gedung_id}
+                                                onChange={(e) => setEditForm(f => ({ ...f, siisyana_gedung_id: e.target.value }))}
+                                                placeholder="mis. 88"
+                                                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
+                                            />
+                                        </div>
+                                    )}
+                                    {editForm.asset_type === 'tanah' && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                                                ID Tanah SIISYANA
+                                            </label>
+                                            <input
+                                                type="number"
+                                                value={editForm.siisyana_tanah_id}
+                                                onChange={(e) => setEditForm(f => ({ ...f, siisyana_tanah_id: e.target.value }))}
+                                                placeholder="mis. 6"
+                                                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-slate-400">
+                                    Tautkan polygon ke record SIISYANA agar popup &amp; detail menampilkan KIB, ruangan, dan galeri.
+                                </p>
                             </div>
 
                             {/* Colors */}

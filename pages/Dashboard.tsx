@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { statsApi, schedulesApi } from '../api/client';
+import React, { useState, useEffect, useCallback } from 'react';
+import { statsApi } from '../api/client';
 import {
     Building2,
     DoorOpen,
@@ -9,58 +9,72 @@ import {
     AlertTriangle,
     CheckCircle,
     Clock,
-    RefreshCw,
     Loader2,
+    Map as MapIcon,
+    Sparkles,
+    Wifi,
 } from 'lucide-react';
 
-interface Stats {
-    total_buildings: number;
-    total_rooms: number;
-    total_assets: number;
-    rooms_available: number;
-    rooms_occupied: number;
-    rooms_maintenance: number;
-    assets_good: number;
-    assets_damaged: number;
-    assets_repair: number;
-    today_schedules: number;
-    total_land_area: number;
-    total_building_area: number;
+/**
+ * Live shape from /api/v1/stats. The fields under `buildings`, `rooms`,
+ * `assets`, `schedules` come from the SIAU gateway (SIISYANA + SIPIRANG +
+ * hibah, cached 1h). `land` is SIDIA-local — sum of admin-entered polygon
+ * land_area values.
+ */
+interface DashboardStats {
+    ok: boolean;
+    buildings?: { total: number; total_area_sqm: number };
+    rooms?: {
+        total: number;
+        siap: number;
+        renovasi: number;
+        tervalidasi: number;
+        pending_validasi: number;
+    };
+    assets?: {
+        total: number;
+        total_siisyana: number;
+        total_hibah: number;
+        by_kondisi: { baik: number; rusak_ringan: number; rusak_berat: number; unknown: number };
+    };
+    schedules?: { today: number };
+    land: { total_land_area_sqm: number; polygons_count: number; source: string };
+    sources_meta?: {
+        gateway_computed_at: string | null;
+        gateway_cache_hit: boolean | null;
+        gateway_ttl_seconds: number | null;
+    };
+    error?: string;
 }
 
+const formatTime = (iso: string | null | undefined): string => {
+    if (!iso) return '—';
+    try {
+        return new Date(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+        return '—';
+    }
+};
+
 export const Dashboard: React.FC = () => {
-    const [stats, setStats] = useState<Stats | null>(null);
+    const [stats, setStats] = useState<DashboardStats | null>(null);
     const [loading, setLoading] = useState(true);
-    const [syncLoading, setSyncLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
-        loadStats();
-    }, []);
-
-    const loadStats = async () => {
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError(null);
         try {
-            setLoading(true);
             const data = await statsApi.get();
             setStats(data);
-        } catch (error) {
-            console.error('Failed to load stats:', error);
+        } catch (e: any) {
+            setError(e?.message ?? 'Gagal memuat statistik.');
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    const handleSyncSipirang = async () => {
-        try {
-            setSyncLoading(true);
-            await schedulesApi.syncSipirang();
-            await loadStats();
-            alert('Berhasil sinkronisasi jadwal dari SIPIRANG!');
-        } catch (error) {
-            alert('Gagal sinkronisasi: ' + (error as Error).message);
-        } finally {
-            setSyncLoading(false);
-        }
-    };
+    useEffect(() => { load(); }, [load]);
 
     if (loading) {
         return (
@@ -70,130 +84,183 @@ export const Dashboard: React.FC = () => {
         );
     }
 
+    const gwTime = formatTime(stats?.sources_meta?.gateway_computed_at);
+    const liveLabel = `Data SIISYANA per ${gwTime}`;
+
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-                    <p className="text-slate-500">Ringkasan data aset Universitas Udayana</p>
+                    <p className="text-slate-500">
+                        Ringkasan data aset Universitas Udayana
+                    </p>
                 </div>
-                <button
-                    onClick={handleSyncSipirang}
-                    disabled={syncLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-medium shadow-lg shadow-emerald-500/20 transition-all"
-                >
-                    {syncLoading ? (
-                        <Loader2 className="animate-spin" size={18} />
-                    ) : (
-                        <RefreshCw size={18} />
-                    )}
-                    Sync SIPIRANG
-                </button>
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
+                    <Wifi size={14} />
+                    Live via SIAU Gateway
+                </div>
             </div>
+
+            {error && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 flex items-start gap-3">
+                    <AlertTriangle className="text-rose-600 shrink-0 mt-0.5" size={20} />
+                    <div className="flex-1">
+                        <p className="font-semibold text-rose-900">Gagal memuat data dashboard</p>
+                        <p className="text-sm text-rose-700">{error}</p>
+                    </div>
+                    <button onClick={load} className="rounded-lg bg-rose-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-rose-700">
+                        Coba lagi
+                    </button>
+                </div>
+            )}
+
+            {stats?.ok === false && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+                    <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+                    <div className="flex-1 text-sm text-amber-900">
+                        SIAU Gateway tidak dapat dihubungi. Angka SIISYANA/SIPIRANG tidak tersedia saat ini; data Peta &amp; Polygon (Luas Tanah) tetap ditampilkan.
+                    </div>
+                </div>
+            )}
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
                     title="Total Gedung"
-                    value={stats?.total_buildings || 0}
+                    value={stats?.buildings?.total ?? 0}
                     icon={Building2}
                     color="blue"
-                    subtitle={`${stats?.total_building_area?.toLocaleString() || 0} m² luas bangunan`}
+                    subtitle={`${(stats?.buildings?.total_area_sqm ?? 0).toLocaleString('id-ID')} m² luas bangunan`}
+                    freshness={liveLabel}
                 />
                 <StatCard
                     title="Total Ruangan"
-                    value={stats?.total_rooms || 0}
+                    value={stats?.rooms?.total ?? 0}
                     icon={DoorOpen}
                     color="indigo"
-                    subtitle={`${stats?.rooms_available || 0} tersedia`}
+                    subtitle={`${(stats?.rooms?.tervalidasi ?? 0).toLocaleString('id-ID')} tervalidasi`}
+                    freshness={liveLabel}
                 />
                 <StatCard
                     title="Total Aset"
-                    value={stats?.total_assets || 0}
+                    value={stats?.assets?.total ?? 0}
                     icon={Package}
                     color="violet"
-                    subtitle={`${stats?.assets_good || 0} dalam kondisi baik`}
+                    subtitle={
+                        <>
+                            {(stats?.assets?.by_kondisi.baik ?? 0).toLocaleString('id-ID')} dalam kondisi baik
+                            {(stats?.assets?.total_hibah ?? 0) > 0 && (
+                                <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-purple-100 text-purple-700 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase">
+                                    <Sparkles size={9} /> +{stats?.assets?.total_hibah} hibah
+                                </span>
+                            )}
+                        </>
+                    }
+                    freshness={liveLabel}
                 />
                 <StatCard
                     title="Jadwal Hari Ini"
-                    value={stats?.today_schedules || 0}
+                    value={stats?.schedules?.today ?? 0}
                     icon={Clock}
                     color="amber"
-                    subtitle="Aktivitas terjadwal"
+                    subtitle="Pemesanan aktif (SIPIRANG)"
+                    freshness={liveLabel}
                 />
             </div>
 
             {/* Status Overview */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Room Status */}
+                {/* Room status */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                    <h3 className="text-lg font-bold text-slate-900 mb-6">Status Ruangan</h3>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-slate-900">Status Ruangan</h3>
+                        <span className="text-xs text-slate-400">{liveLabel}</span>
+                    </div>
                     <div className="space-y-4">
                         <StatusBar
-                            label="Tersedia"
-                            value={stats?.rooms_available || 0}
-                            total={stats?.total_rooms || 1}
+                            label="Siap dipakai"
+                            value={stats?.rooms?.siap ?? 0}
+                            total={stats?.rooms?.total || 1}
                             color="emerald"
                             icon={CheckCircle}
                         />
                         <StatusBar
-                            label="Digunakan"
-                            value={stats?.rooms_occupied || 0}
-                            total={stats?.total_rooms || 1}
-                            color="rose"
-                            icon={Users}
-                        />
-                        <StatusBar
-                            label="Perbaikan"
-                            value={stats?.rooms_maintenance || 0}
-                            total={stats?.total_rooms || 1}
+                            label="Sedang renovasi"
+                            value={stats?.rooms?.renovasi ?? 0}
+                            total={stats?.rooms?.total || 1}
                             color="amber"
                             icon={AlertTriangle}
+                        />
+                        <StatusBar
+                            label="Pending validasi"
+                            value={stats?.rooms?.pending_validasi ?? 0}
+                            total={stats?.rooms?.total || 1}
+                            color="rose"
+                            icon={Users}
                         />
                     </div>
                 </div>
 
-                {/* Asset Condition */}
+                {/* Asset condition */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                    <h3 className="text-lg font-bold text-slate-900 mb-6">Kondisi Aset</h3>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-slate-900">Kondisi Aset</h3>
+                        <span className="text-xs text-slate-400">{liveLabel}</span>
+                    </div>
                     <div className="space-y-4">
                         <StatusBar
                             label="Baik"
-                            value={stats?.assets_good || 0}
-                            total={stats?.total_assets || 1}
+                            value={stats?.assets?.by_kondisi.baik ?? 0}
+                            total={stats?.assets?.total || 1}
                             color="emerald"
                             icon={CheckCircle}
                         />
                         <StatusBar
-                            label="Rusak"
-                            value={stats?.assets_damaged || 0}
-                            total={stats?.total_assets || 1}
-                            color="rose"
+                            label="Rusak Ringan"
+                            value={stats?.assets?.by_kondisi.rusak_ringan ?? 0}
+                            total={stats?.assets?.total || 1}
+                            color="amber"
                             icon={AlertTriangle}
                         />
                         <StatusBar
-                            label="Perbaikan"
-                            value={stats?.assets_repair || 0}
-                            total={stats?.total_assets || 1}
-                            color="amber"
+                            label="Rusak Berat"
+                            value={stats?.assets?.by_kondisi.rusak_berat ?? 0}
+                            total={stats?.assets?.total || 1}
+                            color="rose"
                             icon={TrendingUp}
                         />
                     </div>
                 </div>
             </div>
 
-            {/* Quick Stats */}
+            {/* Land + building area */}
             <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-6 text-white">
-                <h3 className="text-lg font-bold mb-4">Luas Area Total</h3>
+                <div className="flex items-start justify-between mb-4">
+                    <h3 className="text-lg font-bold">Luas Area Total</h3>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <p className="text-blue-200 text-sm">Luas Tanah</p>
-                        <p className="text-3xl font-bold">{stats?.total_land_area?.toLocaleString() || 0} m²</p>
+                        <div className="flex items-center gap-2 text-blue-200 text-sm">
+                            <MapIcon size={14} />
+                            <span>Luas Tanah</span>
+                        </div>
+                        <p className="text-3xl font-bold mt-1">
+                            {(stats?.land.total_land_area_sqm ?? 0).toLocaleString('id-ID')} m²
+                        </p>
+                        <p className="text-xs text-blue-300 mt-1">
+                            Dari {stats?.land.polygons_count ?? 0} polygon di Peta &amp; Polygon
+                        </p>
                     </div>
                     <div>
-                        <p className="text-blue-200 text-sm">Luas Bangunan</p>
-                        <p className="text-3xl font-bold">{stats?.total_building_area?.toLocaleString() || 0} m²</p>
+                        <div className="flex items-center gap-2 text-blue-200 text-sm">
+                            <Building2 size={14} />
+                            <span>Luas Bangunan</span>
+                        </div>
+                        <p className="text-3xl font-bold mt-1">
+                            {(stats?.buildings?.total_area_sqm ?? 0).toLocaleString('id-ID')} m²
+                        </p>
+                        <p className="text-xs text-blue-300 mt-1">{liveLabel}</p>
                     </div>
                 </div>
             </div>
@@ -201,13 +268,17 @@ export const Dashboard: React.FC = () => {
     );
 };
 
-// Stat Card Component
+// ============================================================================
+// Stat card
+// ============================================================================
+
 interface StatCardProps {
     title: string;
     value: number;
     icon: React.ElementType;
     color: 'blue' | 'indigo' | 'violet' | 'amber';
-    subtitle?: string;
+    subtitle?: React.ReactNode;
+    freshness?: string;
 }
 
 const colorClasses = {
@@ -217,25 +288,31 @@ const colorClasses = {
     amber: { bg: 'bg-amber-100', text: 'text-amber-600', shadow: 'shadow-amber-500/10' },
 };
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, subtitle }) => {
+const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, subtitle, freshness }) => {
     const colors = colorClasses[color];
     return (
         <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 p-6 ${colors.shadow}`}>
             <div className="flex items-start justify-between">
-                <div>
+                <div className="min-w-0 flex-1">
                     <p className="text-slate-500 text-sm font-medium">{title}</p>
-                    <p className="text-3xl font-bold text-slate-900 mt-1">{value.toLocaleString()}</p>
+                    <p className="text-3xl font-bold text-slate-900 mt-1">{value.toLocaleString('id-ID')}</p>
                     {subtitle && <p className="text-xs text-slate-400 mt-1">{subtitle}</p>}
                 </div>
-                <div className={`p-3 rounded-xl ${colors.bg}`}>
+                <div className={`p-3 rounded-xl ${colors.bg} shrink-0`}>
                     <Icon className={colors.text} size={24} />
                 </div>
             </div>
+            {freshness && (
+                <p className="text-[10px] text-slate-300 mt-3 truncate" title={freshness}>{freshness}</p>
+            )}
         </div>
     );
 };
 
-// Status Bar Component
+// ============================================================================
+// Status bar
+// ============================================================================
+
 interface StatusBarProps {
     label: string;
     value: number;
@@ -251,7 +328,7 @@ const statusColorClasses = {
 };
 
 const StatusBar: React.FC<StatusBarProps> = ({ label, value, total, color, icon: Icon }) => {
-    const percentage = Math.round((value / total) * 100);
+    const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
     const colors = statusColorClasses[color];
 
     return (
@@ -262,7 +339,10 @@ const StatusBar: React.FC<StatusBarProps> = ({ label, value, total, color, icon:
             <div className="flex-1">
                 <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-medium text-slate-700">{label}</span>
-                    <span className="text-sm font-bold text-slate-900">{value}</span>
+                    <span className="text-sm font-bold text-slate-900">
+                        {value.toLocaleString('id-ID')}
+                        <span className="text-xs text-slate-400 font-normal ml-1">({percentage}%)</span>
+                    </span>
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div

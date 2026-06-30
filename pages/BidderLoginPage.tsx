@@ -40,7 +40,7 @@ export const BidderLoginPage: React.FC = () => {
                     className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
                 >
                     <ArrowLeft size={20} />
-                    Kembali ke Daftar Lelang
+                    Kembali ke Daftar Tender
                 </Link>
 
                 <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
@@ -48,7 +48,7 @@ export const BidderLoginPage: React.FC = () => {
                     <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8 text-center">
                         <h1 className="text-2xl font-bold mb-2">Login Peserta</h1>
                         <p className="text-blue-200">
-                            Masuk untuk mengikuti lelang dan sewa aset
+                            Masuk untuk mengikuti tender dan sewa aset
                         </p>
                     </div>
 
@@ -140,7 +140,7 @@ export const BidderLoginPage: React.FC = () => {
                 {/* Info */}
                 <div className="mt-6 p-4 bg-white/50 rounded-xl">
                     <p className="text-sm text-gray-500 text-center">
-                        Login ini khusus untuk peserta lelang. Admin silahkan login melalui{' '}
+                        Login ini khusus untuk peserta tender. Admin silahkan login melalui{' '}
                         <Link to="/admin/login" className="text-blue-900 hover:underline">
                             halaman admin
                         </Link>

@@ -34,7 +34,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const AUCTION_TYPE_LABELS: Record<string, string> = {
-    auction: 'Lelang',
+    auction: 'Tender',
     rent: 'Sewa',
     facility_rent: 'Sewa Fasilitas',
 };
@@ -114,7 +114,7 @@ export const AuctionDetailPage: React.FC = () => {
             <div className="min-h-screen bg-slate-50 flex items-center justify-center">
                 <div className="flex flex-col items-center gap-4">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-900"></div>
-                    <p className="text-slate-500 font-medium">Memuat detail lelang...</p>
+                    <p className="text-slate-500 font-medium">Memuat detail tender...</p>
                 </div>
             </div>
         );
@@ -125,14 +125,14 @@ export const AuctionDetailPage: React.FC = () => {
             <div className="min-h-screen bg-slate-50 flex items-center justify-center">
                 <div className="text-center p-8 bg-white rounded-2xl shadow-lg max-w-md">
                     <AlertCircle className="w-16 h-16 text-rose-500 mx-auto mb-4" />
-                    <h2 className="text-2xl font-bold text-slate-900 mb-2">Lelang Tidak Ditemukan</h2>
-                    <p className="text-slate-600 mb-6">Maaf, lelang yang Anda cari tidak dapat ditemukan atau telah dihapus.</p>
+                    <h2 className="text-2xl font-bold text-slate-900 mb-2">Tender Tidak Ditemukan</h2>
+                    <p className="text-slate-600 mb-6">Maaf, tender yang Anda cari tidak dapat ditemukan atau telah dihapus.</p>
                     <Link
                         to="/lelang"
                         className="inline-flex items-center gap-2 px-6 py-3 bg-blue-900 text-white rounded-xl font-medium hover:bg-blue-800 transition-colors"
                     >
                         <ChevronLeft size={20} />
-                        Kembali ke Daftar Lelang
+                        Kembali ke Daftar Tender
                     </Link>
                 </div>
             </div>
@@ -170,7 +170,7 @@ export const AuctionDetailPage: React.FC = () => {
                 <div className="flex items-center gap-2 text-sm text-slate-500 mb-6 overflow-x-auto whitespace-nowrap pb-2">
                     <Link to="/" className="hover:text-blue-900">Beranda</Link>
                     <span>/</span>
-                    <Link to="/lelang" className="hover:text-blue-900">Lelang</Link>
+                    <Link to="/lelang" className="hover:text-blue-900">Tender</Link>
                     <span>/</span>
                     <span className="text-slate-900 font-medium truncate max-w-[200px]">{auction.title}</span>
                 </div>
@@ -416,7 +416,7 @@ export const AuctionDetailPage: React.FC = () => {
                                     </div>
                                 ) : (
                                     <div className="w-full py-4 bg-slate-100 text-slate-500 font-bold rounded-xl text-center cursor-not-allowed">
-                                        Lelang Berakhir
+                                        Tender Berakhir
                                     </div>
                                 )}
                             </div>

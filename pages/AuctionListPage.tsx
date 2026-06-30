@@ -32,7 +32,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
 };
 
 const AUCTION_TYPE_LABELS: Record<string, string> = {
-    auction: 'Lelang',
+    auction: 'Tender',
     rent: 'Sewa',
     facility_rent: 'Sewa Fasilitas',
 };
@@ -116,10 +116,10 @@ export const AuctionListPage: React.FC = () => {
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
                     <div className="text-center">
                         <h1 className="text-4xl md:text-5xl font-bold mb-4">
-                            E-Lelang & Sewa Aset
+                            E-Tender & Sewa Aset
                         </h1>
                         <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-                            Platform lelang dan sewa aset Universitas Udayana. Ikuti lelang tanah, gedung,
+                            Platform tender dan sewa aset Universitas Udayana. Ikuti tender tanah, gedung,
                             dan fasilitas secara transparan dan mudah.
                         </p>
 
@@ -130,7 +130,7 @@ export const AuctionListPage: React.FC = () => {
                                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                                     <input
                                         type="text"
-                                        placeholder="Cari lelang atau aset..."
+                                        placeholder="Cari tender atau aset..."
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
                                         className="w-full pl-12 pr-4 py-4 rounded-xl text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-300 outline-none"
@@ -156,7 +156,7 @@ export const AuctionListPage: React.FC = () => {
                             <Gavel className="text-yellow-600" size={28} />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Lelang Aktif</p>
+                            <p className="text-sm text-gray-500">Tender Aktif</p>
                             <p className="text-2xl font-bold text-gray-900">
                                 {auctions.filter(a => a.status === 'active' && a.auction_type === 'auction').length}
                             </p>
@@ -218,7 +218,7 @@ export const AuctionListPage: React.FC = () => {
                                     : 'bg-white text-gray-700 hover:bg-gray-50'
                                     }`}
                             >
-                                Lelang
+                                Tender
                             </button>
                             <button
                                 onClick={() => setFilterType('rent')}
@@ -289,7 +289,7 @@ export const AuctionListPage: React.FC = () => {
                     <div className="text-center py-20">
                         <Gavel className="mx-auto text-gray-300 mb-4" size={64} />
                         <h3 className="text-xl font-semibold text-gray-600 mb-2">
-                            Belum ada lelang atau sewa tersedia
+                            Belum ada tender atau sewa tersedia
                         </h3>
                         <p className="text-gray-400">
                             Silakan cek kembali nanti untuk informasi terbaru.
@@ -397,10 +397,10 @@ export const AuctionListPage: React.FC = () => {
             <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white py-16">
                 <div className="max-w-4xl mx-auto px-4 text-center">
                     <h2 className="text-3xl font-bold mb-4">
-                        Ingin Ikut Lelang atau Sewa Aset?
+                        Ingin Ikut Tender atau Sewa Aset?
                     </h2>
                     <p className="text-lg text-blue-200 mb-8">
-                        Daftar sekarang dengan KTP dan NPWP untuk mengikuti lelang dan sewa aset Universitas Udayana
+                        Daftar sekarang dengan KTP dan NPWP untuk mengikuti tender dan sewa aset Universitas Udayana
                     </p>
                     <div className="flex flex-col sm:flex-row gap-4 justify-center">
                         <Link

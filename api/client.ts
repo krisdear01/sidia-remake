@@ -516,3 +516,134 @@ export const adminAuctionsApi = {
   completeBooking: (id: number) =>
     apiFetch<any>(`/admin/facility-bookings/${id}/complete`, { method: 'POST' }),
 };
+
+// ============================================================================
+// SIAU Gateway client — public read-only directory + Sanctum-gated admin proxy.
+// (Restored from the last production build after an accidental `git checkout`
+//  discarded these uncommitted working-tree additions.)
+// ============================================================================
+
+const SIAU_BASE_URL = `${API_BASE_URL}/siau`;
+
+/** Error thrown by SIAU gateway calls, carrying the gateway's problem-details. */
+export class SiauApiError extends Error {
+  code: string;
+  status: number;
+  detail?: string;
+  type?: string;
+  constructor(code: string, status: number, detail?: string, type?: string) {
+    super(detail || code);
+    this.code = code;
+    this.status = status;
+    this.detail = detail;
+    this.type = type;
+    this.name = 'SiauApiError';
+  }
+}
+
+const siauBuildQuery = (params?: Record<string, any>): string => {
+  if (!params) return '';
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '') continue;
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  }
+  return parts.length ? '?' + parts.join('&') : '';
+};
+
+async function siauFetch<T = any>(endpoint: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${SIAU_BASE_URL}${endpoint}`, {
+      headers: { Accept: 'application/json' },
+    });
+  } catch {
+    throw new SiauApiError('SIAU_GATEWAY_UNREACHABLE', 503, 'The directory service is unreachable.');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({} as any));
+    throw new SiauApiError(
+      body.code ?? `HTTP_${response.status}`,
+      response.status,
+      body.detail ?? body.title ?? `HTTP error ${response.status}`,
+      body.type
+    );
+  }
+  return response.json();
+}
+
+// Public SIAU gateway directory (read-only, no auth)
+export const siauApi = {
+  health: () => siauFetch('/health'),
+  buildings: {
+    list: (params?: Record<string, any>) => siauFetch('/buildings' + siauBuildQuery(params)),
+    get: (id: string | number) => siauFetch(`/buildings/${id}`),
+  },
+  land: {
+    list: (params?: Record<string, any>) => siauFetch('/land' + siauBuildQuery(params)),
+    get: (id: string | number) => siauFetch(`/land/${id}`),
+  },
+  // Building footprint polygons (GeoJSON FeatureCollection) for the /gedung map.
+  gedungPolygons: () => siauFetch('/gedung-polygons'),
+  rooms: {
+    list: (params?: Record<string, any>) => siauFetch('/rooms' + siauBuildQuery(params)),
+    get: (id: string | number) => siauFetch(`/rooms/${id}`),
+    assets: (id: string | number, params?: Record<string, any>) =>
+      siauFetch(`/rooms/${id}/assets` + siauBuildQuery(params)),
+    schedule: (id: string | number, from: string, to: string) =>
+      siauFetch(`/rooms/${id}/schedule${siauBuildQuery({ from, to })}`),
+    availability: (id: string | number, at?: string) =>
+      siauFetch(`/rooms/${id}/availability${siauBuildQuery({ at })}`),
+  },
+};
+
+// Admin SIAU proxy (Sanctum-gated; injects gateway admin token server-side)
+export const adminSiauApi = {
+  identityMap: {
+    unmatched: (limit = 200) =>
+      apiFetch<any>(`/admin/siau/identity-map/unmatched?limit=${encodeURIComponent(String(limit))}`),
+    resync: () => apiFetch<any>('/admin/siau/identity-map/resync', { method: 'POST' }),
+    update: (siisyanaId: string | number, body: any) =>
+      apiFetch<any>(`/admin/siau/identity-map/${siisyanaId}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+  },
+  hibahAssets: {
+    create: (body: any) =>
+      apiFetch<any>('/admin/siau/hibah-assets', { method: 'POST', body: JSON.stringify(body) }),
+    delete: (id: string | number) =>
+      apiFetch<any>(`/admin/siau/hibah-assets/${id}`, { method: 'DELETE' }),
+  },
+  rooms: {
+    setVisibility: (id: string | number, isPublic: boolean) =>
+      apiFetch<{ data: { id: string; is_public: boolean } }>(
+        `/admin/siau/rooms/${id}/visibility`,
+        { method: 'PUT', body: JSON.stringify({ is_public: isPublic }) }
+      ),
+    getDbr: (id: string | number) =>
+      apiFetch<{ data: import('../types').DbrPayload }>(`/admin/siau/rooms/${id}/dbr`),
+  },
+};
+
+// Bounded-concurrency wrapper for room availability lookups (max 4 in flight)
+const SIAU_AVAILABILITY_MAX_CONCURRENT = 4;
+let siauAvailabilityActive = 0;
+const siauAvailabilityQueue: Array<() => void> = [];
+export function fetchAvailabilityThrottled(roomId: string | number): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      siauAvailabilityActive++;
+      siauApi.rooms
+        .availability(roomId)
+        .then(resolve, reject)
+        .finally(() => {
+          siauAvailabilityActive--;
+          const next = siauAvailabilityQueue.shift();
+          if (next) next();
+        });
+    };
+    if (siauAvailabilityActive < SIAU_AVAILABILITY_MAX_CONCURRENT) run();
+    else siauAvailabilityQueue.push(run);
+  });
+}

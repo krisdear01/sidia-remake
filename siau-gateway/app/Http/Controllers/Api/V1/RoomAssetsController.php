@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Domain\Mapping\AssetMapper;
 use App\Support\CachedRows;
 use App\Support\JsonEnvelope;
+use App\Support\RoomCache;
+use App\Support\RoomVisibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -20,10 +22,21 @@ class RoomAssetsController extends Controller
             return JsonEnvelope::validation('id must be a positive integer', $request->path());
         }
 
+        if (!RoomVisibility::isAccessible((int) $id, $request)) {
+            return response()->json([
+                'type' => 'https://siau.unud.ac.id/errors/forbidden',
+                'title' => 'Forbidden',
+                'status' => 403,
+                'code' => 'ROOM_PRIVATE',
+                'detail' => 'This room is private; asset access requires admin authentication.',
+                'instance' => $request->path(),
+            ], 403, ['Content-Type' => 'application/problem+json']);
+        }
+
         $limit = min(max((int) $request->query('limit', 50), 1), 200);
         $cursor = (int) $request->query('cursor', 0);
 
-        $key = "siau:v1:rooms:{$id}:assets:c{$cursor}:l{$limit}";
+        $key = RoomCache::key((int) $id, "assets:c{$cursor}:l{$limit}");
         [$rows, $hit] = CachedRows::rememberMany($key, self::TTL, function () use ($id, $limit, $cursor) {
             // Current placement = latest row per id_barang in barang_ruangan_histories.
             return DB::connection('siisyana_ro')->select(
@@ -44,11 +57,25 @@ class RoomAssetsController extends Controller
         $data = array_map([AssetMapper::class, 'map'], $rows);
         $nextCursor = !empty($rows) ? end($rows)->id : null;
 
+        // Append hibah assets for this room. Hibah is small and local — no
+        // separate pagination, we just include all of them on the first page
+        // (cursor 0). On subsequent cursor pages we omit them to avoid
+        // duplicate rendering as the SPA paginates through SIISYANA assets.
+        if ($cursor === 0) {
+            $hibahRows = DB::connection('gateway')->table('hibah_assets')
+                ->where('id_ruangan', (int) $id)
+                ->orderByDesc('id')
+                ->get();
+            foreach ($hibahRows as $h) {
+                $data[] = AssetMapper::mapHibah($h);
+            }
+        }
+
         return JsonEnvelope::ok(
             $data,
             meta: [
                 'cache' => ['hit' => $hit, 'ttl_seconds' => self::TTL],
-                'source' => 'siisyana',
+                'source' => 'siisyana+hibah',
                 'pagination' => ['limit' => $limit, 'next_cursor' => $nextCursor],
             ],
             links: [

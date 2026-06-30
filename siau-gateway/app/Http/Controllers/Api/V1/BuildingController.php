@@ -54,9 +54,10 @@ class BuildingController extends Controller
 
         $key = "siau:v1:buildings:{$id}";
         [$row, $hit] = CachedRows::rememberOne($key, self::TTL_DETAIL, function () use ($id) {
+            // Schema confirmed (PROJ-81): nomor_kib + file_rincian_gedung exist on tb_m_gedung.
             $rows = DB::connection('siisyana_ro')->select(
                 'SELECT id, kode_gedung, nama, jumlah_lantai, latitude, longitude, '
-                . 'luas_gedung, jam_buka, jam_tutup, is_valid '
+                . 'luas_gedung, jam_buka, jam_tutup, is_valid, nomor_kib, file_rincian_gedung '
                 . 'FROM tb_m_gedung WHERE id = ? AND is_deleted = 0 LIMIT 1',
                 [(int) $id]
             );
@@ -67,9 +68,24 @@ class BuildingController extends Controller
             return JsonEnvelope::notFound('BUILDING_NOT_FOUND', "No building with id {$id}.", $request->path());
         }
 
+        [$gallery, $galleryHit] = CachedRows::rememberMany("siau:v1:buildings:{$id}:gallery", self::TTL_DETAIL, function () use ($id) {
+            // Schema confirmed (PROJ-81): gedung_fotos(id_gedung, image_foto_gedung), soft-deleted.
+            return DB::connection('siisyana_ro')->select(
+                'SELECT id, image_foto_gedung FROM gedung_fotos '
+                . 'WHERE id_gedung = ? AND deleted_at IS NULL ORDER BY id ASC',
+                [(int) $id]
+            );
+        });
+
+        $data = BuildingMapper::map($row);
+        $data['gallery'] = array_map(fn ($g) => [
+            'url' => BuildingMapper::storageUrl($g->image_foto_gedung ?? null),
+            'caption' => null,
+        ], $gallery);
+
         return JsonEnvelope::ok(
-            BuildingMapper::map($row),
-            meta: ['cache' => ['hit' => $hit, 'ttl_seconds' => self::TTL_DETAIL], 'source' => 'siisyana'],
+            $data,
+            meta: ['cache' => ['hit' => $hit && $galleryHit, 'ttl_seconds' => self::TTL_DETAIL], 'source' => 'siisyana'],
             links: ['self' => "/api/v1/buildings/{$id}"]
         );
     }

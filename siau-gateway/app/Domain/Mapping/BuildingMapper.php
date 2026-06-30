@@ -18,7 +18,21 @@ class BuildingMapper
             'jam_buka' => $row->jam_buka ?? null,
             'jam_tutup' => $row->jam_tutup ?? null,
             'is_valid' => isset($row->is_valid) ? (bool) $row->is_valid : null,
+            // Schema confirmed (PROJ-81): tb_m_gedung.nomor_kib + file_rincian_gedung.
+            'nomor_kib' => $row->nomor_kib ?? null,
+            'file_rincian_gedung' => self::storageUrl($row->file_rincian_gedung ?? null),
         ];
+    }
+
+    /** Build an absolute SIISYANA storage URL from a stored relative path. */
+    public static function storageUrl(?string $path): ?string
+    {
+        if ($path === null || $path === '') return null;
+        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+            return $path;
+        }
+        $base = config('siau.storage_base_url');
+        return $base . '/' . ltrim($path, '/');
     }
 
     private static function toFloat(mixed $v): ?float

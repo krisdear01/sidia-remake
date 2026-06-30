@@ -13,11 +13,12 @@ class RoomMapper
      *   r.is_renovasi, r.id_gedung, r.id_unit, r.id_jenis_ruangan,
      *   g_kode, g_nama, g_lat, g_lng, u_id, u_nama, jr_id, jr_nama
      */
-    public static function map(object $row, ?string $kesiapan = null, ?int $assetCount = null): array
+    public static function map(object $row, ?string $kesiapan = null, ?int $assetCount = null, ?bool $isPublic = null): array
     {
         $kapasitas = isset($row->max_kapasitas) ? (int) $row->max_kapasitas : null;
 
         return [
+            'is_public' => $isPublic ?? true,
             'id' => (string) $row->id,
             'kode_ruangan' => $row->kode_ruangan,
             'nama' => $row->nama,

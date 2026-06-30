@@ -35,4 +35,13 @@ return [
         ],
     ],
 
+    'siau_gateway' => [
+        'url' => env('SIAU_GATEWAY_URL', 'http://localhost:8765/api/v1'),
+        'timeout' => (int) env('SIAU_GATEWAY_TIMEOUT', 5),
+        'cache_ttl' => (int) env('SIAU_GATEWAY_CACHE_TTL', 30),
+        // Gateway admin token — used ONLY by the Sanctum-gated admin proxy.
+        // Never read on the public proxy path; never exposed to the frontend.
+        'admin_token' => env('SIAU_ADMIN_TOKEN'),
+    ],
+
 ];

@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Room, RoomStatus } from './types';
-import { Modal } from './components/Modal';
-import { RoomDetail } from './components/RoomDetail';
 import { CategoryMenu } from './components/CategoryMenu';
 import { AssetMap } from './components/AssetMap';
-import { Search, Filter, ArrowRight, MapPin, Monitor, Clock, Building2, ChevronDown } from 'lucide-react';
-import { isAuthenticated, roomsApi, categoriesApi, locationsApi } from './api/client';
+import { SiauRoomModal } from './components/SiauRoomModal';
+import { Paginator, PAGE_SIZE_OPTIONS } from './components/Paginator';
+import { Search, Filter, ArrowRight, MapPin, Monitor, Building2, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { isAuthenticated, siauApi, SiauApiError } from './api/client';
+import type { SiauRoom, SiauBuilding } from './types';
 import { LoginPage } from './pages/LoginPage';
 import { AdminLayout } from './pages/AdminLayout';
 import { Dashboard } from './pages/Dashboard';
@@ -16,6 +16,9 @@ import { RoomsPage } from './pages/RoomsPage';
 import { AssetsPage } from './pages/AssetsPage';
 import { PolygonsPage } from './pages/PolygonsPage';
 import { SchedulesPage } from './pages/SchedulesPage';
+import { IdentityMapPage } from './pages/admin/IdentityMapPage';
+import { CetakDbrPage } from './pages/admin/CetakDbrPage';
+import { PenyusutanAsetPage } from './pages/PenyusutanAsetPage';
 
 // E-Lelang Pages
 import { AuctionListPage } from './pages/AuctionListPage';
@@ -33,68 +36,116 @@ import { PerpustakaanPage } from './pages/PerpustakaanPage';
 // Public Home Page Component
 const HomePage: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [selectedRoom, setSelectedRoom] = useState<SiauRoom | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [filteredRooms, setFilteredRooms] = useState<Room[]>([]);
+  const [rooms, setRooms] = useState<SiauRoom[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLocation, setSelectedLocation] = useState('');
-  const [locations, setLocations] = useState<any[]>([]);
+  const [error, setError] = useState<SiauApiError | null>(null);
+  const [selectedBuilding, setSelectedBuilding] = useState<string>('');
+  const [buildings, setBuildings] = useState<SiauBuilding[]>([]);
+  const fetchTokenRef = useRef(0);
 
-  // Real-time clock effect
+  // Sort by asset_count. Default 'desc' (most assets first).
+  // Cycles on header click: desc → asc → null (natural order).
+  const [assetSort, setAssetSort] = useState<'desc' | 'asc' | null>('desc');
+  const toggleAssetSort = () =>
+    setAssetSort((d) => (d === 'desc' ? 'asc' : d === 'asc' ? null : 'desc'));
+
+  // Advanced filters (Filter Lanjutan)
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [filterTipe, setFilterTipe] = useState('');
+  const [filterValidasi, setFilterValidasi] = useState<'' | 'validated' | 'pending'>('');
+  const advancedActiveCount = (filterTipe ? 1 : 0) + (filterValidasi ? 1 : 0);
+  const resetAdvanced = () => { setFilterTipe(''); setFilterValidasi(''); };
+
+  // Client-side pagination for the room table.
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+
+  // Real-time clock
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Load data from API
+  // Load buildings (for the filter dropdown)
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [roomsRes, locationsRes] = await Promise.all([
-          roomsApi.list({ per_page: 100 }),
-          locationsApi.list(),
-        ]);
-
-        // Transform API response to match existing Room type
-        const transformedRooms = (roomsRes.data || []).map((room: any) => ({
-          id: room.id.toString(),
-          name: room.name,
-          faculty: room.building?.faculty?.name || room.faculty_name || 'N/A',
-          capacity: room.capacity,
-          status: room.status as RoomStatus,
-          currentActivity: room.current_activity || '-',
-          nextAvailableTime: room.next_available_time || '-',
-          assets: room.assets || [],
-          schedule: room.schedules || [],
-        }));
-
-        setRooms(transformedRooms);
-        setFilteredRooms(transformedRooms);
-        setLocations(locationsRes || []);
-      } catch (error) {
-        console.error('Failed to load data:', error);
-        // Fallback to empty array if API fails
-        setRooms([]);
-        setFilteredRooms([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
+    siauApi.buildings.list({ limit: 200 })
+      .then((res) => setBuildings(res.data))
+      .catch(() => setBuildings([]));
   }, []);
 
-  // Filter Logic
-  useEffect(() => {
-    const lowerTerm = searchTerm.toLowerCase();
-    const results = rooms.filter(room =>
-      room.name.toLowerCase().includes(lowerTerm) ||
-      room.faculty.toLowerCase().includes(lowerTerm) ||
-      room.currentActivity?.toLowerCase().includes(lowerTerm)
+  // Bulk-fetch all rooms — walk the cursor sequentially so sort-by-aset is
+  // global, not just the first page. Re-runs whenever the server-side filter
+  // (Gedung) changes.
+  const bulkFetch = useCallback(async () => {
+    const token = ++fetchTokenRef.current;
+    setLoading(true);
+    setError(null);
+    setRooms([]);
+
+    let cursor: number | null = null;
+    const accumulator: SiauRoom[] = [];
+    try {
+      for (let i = 0; i < 100; i++) {
+        const params: { id_gedung?: number; limit: number; cursor?: number } = { limit: 200 };
+        if (cursor !== null) params.cursor = cursor;
+        if (selectedBuilding) params.id_gedung = Number(selectedBuilding);
+        const res = await siauApi.rooms.list(params);
+        if (token !== fetchTokenRef.current) return;
+        accumulator.push(...res.data);
+        setRooms([...accumulator]);
+        const next = res.meta.pagination?.next_cursor ?? null;
+        if (next === null) break;
+        cursor = next;
+      }
+    } catch (e: unknown) {
+      if (token !== fetchTokenRef.current) return;
+      setError(e instanceof SiauApiError ? e : new SiauApiError('UNKNOWN', 0, 'Gagal memuat data ruangan.'));
+    } finally {
+      if (token === fetchTokenRef.current) setLoading(false);
+    }
+  }, [selectedBuilding]);
+
+  useEffect(() => { bulkFetch(); }, [bulkFetch]);
+
+  // Distinct room types for the advanced "Tipe" filter, from loaded data.
+  const tipeOptions = useMemo(() => {
+    const set = new Set<string>();
+    rooms.forEach((r) => { if (r.jenis_ruangan?.nama) set.add(r.jenis_ruangan.nama); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [rooms]);
+
+  const filteredRooms = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    let base = !q ? rooms : rooms.filter((r) =>
+      r.nama.toLowerCase().includes(q) ||
+      r.kode_ruangan.toLowerCase().includes(q) ||
+      (r.gedung?.nama ?? '').toLowerCase().includes(q) ||
+      (r.jenis_ruangan?.nama ?? '').toLowerCase().includes(q)
     );
-    setFilteredRooms(results);
-  }, [searchTerm, rooms]);
+    if (filterTipe) base = base.filter((r) => r.jenis_ruangan?.nama === filterTipe);
+    if (filterValidasi) base = base.filter((r) => r.status_validasi === filterValidasi);
+    if (assetSort === null) return base;
+    const withIndex = base.map((r, i) => ({ r, i }));
+    withIndex.sort((a, b) => {
+      const av = a.r.asset_count ?? 0;
+      const bv = b.r.asset_count ?? 0;
+      const diff = assetSort === 'desc' ? bv - av : av - bv;
+      return diff !== 0 ? diff : a.i - b.i;
+    });
+    return withIndex.map((x) => x.r);
+  }, [rooms, searchTerm, assetSort, filterTipe, filterValidasi]);
+
+  // Reset to the first page whenever the filtered set changes.
+  useEffect(() => { setPageIndex(0); }, [searchTerm, selectedBuilding, filterTipe, filterValidasi, assetSort, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRooms.length / pageSize));
+  const safePageIndex = Math.min(pageIndex, totalPages - 1);
+  const pagedRooms = useMemo(
+    () => filteredRooms.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize),
+    [filteredRooms, safePageIndex, pageSize]
+  );
 
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('id-ID', {
@@ -117,23 +168,17 @@ const HomePage: React.FC = () => {
     <div className="min-h-screen bg-slate-50 pb-12">
       {/* Navbar / Header */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 sm:px-8 lg:px-12">
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-500/20">
               <MapPin className="text-white" size={24} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">SIDIA</h1>
-              <p className="text-xs font-medium text-slate-500">Sistem Informasi Digital Aset</p>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">SIAU</h1>
+              <p className="text-xs font-medium text-slate-500">Sistem Informasi Aset Udayana</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <a
-              href="/admin"
-              className="hidden md:inline-flex items-center px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 transition-colors"
-            >
-              Admin Panel
-            </a>
             <div className="text-right hidden sm:block">
               <div className="text-3xl font-mono font-bold text-slate-800">{formatTime(currentTime)}</div>
               <div className="text-sm font-medium text-slate-500">{formatDate(currentTime)}</div>
@@ -142,7 +187,7 @@ const HomePage: React.FC = () => {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-6 py-8 sm:px-8 lg:px-12">
 
         {/* Category Menu Grid */}
         <CategoryMenu />
@@ -172,42 +217,114 @@ const HomePage: React.FC = () => {
             <p className="text-xs text-slate-400">Contoh: Gedung A, Lab Komputer, dll.</p>
           </div>
 
-          {/* Location Dropdown */}
+          {/* Building Dropdown (sourced from SIAU gateway) */}
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-slate-700">Lokasi</label>
+            <label className="text-sm font-semibold text-slate-700">Gedung</label>
             <div className="relative">
               <select
-                value={selectedLocation}
-                onChange={(e) => setSelectedLocation(e.target.value)}
+                value={selectedBuilding}
+                onChange={(e) => setSelectedBuilding(e.target.value)}
                 className="block w-full appearance-none rounded-lg border border-slate-300 bg-slate-50 p-3 text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-blue-500 sm:text-sm transition-all"
               >
-                <option value="">-- Select all --</option>
-                {locations.map((loc: any) => (
-                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                <option value="">-- Semua Gedung --</option>
+                {buildings.map((b) => (
+                  <option key={b.id} value={b.id}>{b.nama}</option>
                 ))}
               </select>
               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">
                 <ChevronDown size={16} />
               </div>
             </div>
-            <p className="text-xs text-slate-400">Pilih lokasi spesifik untuk filter peta.</p>
+            <p className="text-xs text-slate-400">Filter daftar ruangan berdasarkan gedung.</p>
           </div>
         </div>
 
-        {/* Map Section */}
+        {/* Map Section — homepage shows land/tanah only (buildings live on /gedung) */}
         <div className="mb-10">
-          <AssetMap />
+          <AssetMap landOnly />
         </div>
 
         {/* Room/Asset List Table */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900">Daftar Ruangan & Aset</h2>
-            <button className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-lg font-bold text-slate-900">Daftar Ruangan & Aset</h2>
+              <span className="text-sm text-slate-400">{filteredRooms.length} hasil</span>
+              <label className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500">
+                Tampilkan
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="rounded-md border border-slate-300 bg-white py-1 pl-2 pr-6 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                / halaman
+              </label>
+            </div>
+            <button
+              onClick={() => setShowAdvanced((s) => !s)}
+              aria-expanded={showAdvanced}
+              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
+                showAdvanced || advancedActiveCount > 0
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
               <Filter size={16} />
               Filter Lanjutan
+              {advancedActiveCount > 0 && (
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-xs font-semibold text-white">
+                  {advancedActiveCount}
+                </span>
+              )}
+              <ChevronDown size={14} className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
             </button>
           </div>
+
+          {/* Advanced filter panel */}
+          {showAdvanced && (
+            <div className="grid grid-cols-1 gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Tipe Ruangan</label>
+                <div className="relative">
+                  <select
+                    value={filterTipe}
+                    onChange={(e) => setFilterTipe(e.target.value)}
+                    className="block w-full appearance-none rounded-lg border border-slate-300 bg-slate-50 p-2.5 pr-9 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">-- Semua Tipe --</option>
+                    {tipeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Status Validasi</label>
+                <div className="relative">
+                  <select
+                    value={filterValidasi}
+                    onChange={(e) => setFilterValidasi(e.target.value as '' | 'validated' | 'pending')}
+                    className="block w-full appearance-none rounded-lg border border-slate-300 bg-slate-50 p-2.5 pr-9 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">-- Semua Status --</option>
+                    <option value="validated">Tervalidasi</option>
+                    <option value="pending">Menunggu</option>
+                  </select>
+                  <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                </div>
+              </div>
+              <div className="flex items-end">
+                <button
+                  onClick={resetAdvanced}
+                  disabled={advancedActiveCount === 0}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed sm:w-auto"
+                >
+                  Reset Filter
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             <div className="overflow-x-auto">
@@ -215,10 +332,25 @@ const HomePage: React.FC = () => {
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
                     <th className="px-6 py-4 font-semibold tracking-wider">Ruangan</th>
-                    <th className="px-6 py-4 font-semibold tracking-wider">Fakultas</th>
-                    <th className="px-6 py-4 font-semibold tracking-wider text-center">Status</th>
-                    <th className="px-6 py-4 font-semibold tracking-wider">Aktivitas</th>
-                    <th className="px-6 py-4 font-semibold tracking-wider">Next</th>
+                    <th className="px-6 py-4 font-semibold tracking-wider">Gedung</th>
+                    <th className="px-6 py-4 font-semibold tracking-wider">Tipe</th>
+                    <th className="px-6 py-4 font-semibold tracking-wider text-center">Validasi</th>
+                    <th className="px-6 py-4 font-semibold tracking-wider text-right">
+                      <button
+                        onClick={toggleAssetSort}
+                        className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-slate-700 transition-colors"
+                        aria-label={`Urutkan berdasarkan jumlah aset${assetSort ? ` (${assetSort === 'desc' ? 'terbanyak ke tersedikit' : 'tersedikit ke terbanyak'})` : ''}`}
+                      >
+                        Aset
+                        {assetSort === 'desc' ? (
+                          <ArrowDown size={12} className="text-blue-600" />
+                        ) : assetSort === 'asc' ? (
+                          <ArrowUp size={12} className="text-blue-600" />
+                        ) : (
+                          <ArrowUpDown size={12} className="opacity-40" />
+                        )}
+                      </button>
+                    </th>
                     <th className="px-6 py-4 text-right font-semibold tracking-wider">Detail</th>
                   </tr>
                 </thead>
@@ -232,6 +364,12 @@ const HomePage: React.FC = () => {
                         </div>
                       </td>
                     </tr>
+                  ) : error ? (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-rose-600">
+                        Layanan direktori sedang tidak tersedia.
+                      </td>
+                    </tr>
                   ) : filteredRooms.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400">
@@ -242,49 +380,44 @@ const HomePage: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    filteredRooms.map((room) => (
+                    pagedRooms.map((room) => (
                       <tr key={room.id} className="group transition-colors hover:bg-slate-50">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="hidden md:flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500 group-hover:bg-white group-hover:shadow-sm transition-all">
                               <Building2 size={20} />
                             </div>
-                            <div>
-                              <p className="font-bold text-slate-900 text-base">{room.name}</p>
-                              <p className="text-xs text-slate-500">Cap: {room.capacity}</p>
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-900 text-base line-clamp-1">{room.nama}</p>
+                              <p className="text-xs text-slate-500">
+                                {room.kode_ruangan}
+                                {room.kapasitas != null && <> · Cap: {room.kapasitas}</>}
+                              </p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-slate-600">{room.faculty}</td>
+                        <td className="px-6 py-4 text-slate-600">{room.gedung?.nama ?? '—'}</td>
+                        <td className="px-6 py-4 text-slate-600">{room.jenis_ruangan?.nama ?? '—'}</td>
                         <td className="px-6 py-4 text-center">
-                          {room.status === RoomStatus.AVAILABLE && (
+                          {room.status_validasi === 'validated' ? (
                             <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
-                              Tersedia
+                              Tervalidasi
                             </span>
-                          )}
-                          {room.status === RoomStatus.OCCUPIED && (
-                            <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-medium text-rose-800">
-                              Digunakan
-                            </span>
-                          )}
-                          {room.status === RoomStatus.MAINTENANCE && (
+                          ) : room.status_validasi === 'pending' ? (
                             <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
-                              Perbaikan
+                              Menunggu
                             </span>
+                          ) : (
+                            <span className="text-slate-300">—</span>
                           )}
                         </td>
-                        <td className="px-6 py-4 truncate max-w-[200px]" title={room.currentActivity || ''}>
-                          <span className="text-slate-700 font-medium">{room.currentActivity || '-'}</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2 text-blue-600 font-mono font-medium text-xs">
-                            {room.nextAvailableTime !== '-' && <Clock size={14} />}
-                            <span>{room.nextAvailableTime}</span>
-                          </div>
+                        <td className="px-6 py-4 text-right text-slate-700 font-medium">
+                          {room.asset_count ?? 0}
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => setSelectedRoom(room)}
+                            aria-label={`Detail ${room.nama}`}
                             className="inline-flex items-center justify-center rounded-full bg-slate-100 p-2 text-slate-400 transition-all hover:bg-blue-600 hover:text-white hover:shadow-md"
                           >
                             <ArrowRight size={18} />
@@ -295,21 +428,30 @@ const HomePage: React.FC = () => {
                   )}
                 </tbody>
               </table>
+              {loading && rooms.length > 0 && (
+                <div className="border-t border-slate-100 p-3 text-center text-xs text-slate-500">
+                  Memuat lainnya... ({rooms.length})
+                </div>
+              )}
             </div>
+            {!error && filteredRooms.length > 0 && (
+              <Paginator
+                pageIndex={safePageIndex}
+                totalPages={totalPages}
+                totalItems={filteredRooms.length}
+                pageSize={pageSize}
+                isLoading={loading}
+                onJump={(p) => setPageIndex(Math.min(Math.max(0, p), totalPages - 1))}
+                label="ruangan"
+              />
+            )}
           </div>
         </div>
       </main>
 
-      {/* Detail Modal */}
+      {/* Detail Modal — lazy-loads assets, schedule, availability from SIAU gateway */}
       {selectedRoom && (
-        <Modal
-          isOpen={!!selectedRoom}
-          onClose={() => setSelectedRoom(null)}
-          title={selectedRoom.name}
-          subtitle={selectedRoom.faculty}
-        >
-          <RoomDetail room={selectedRoom} />
-        </Modal>
+        <SiauRoomModal room={selectedRoom} onClose={() => setSelectedRoom(null)} />
       )}
     </div>
   );
@@ -367,11 +509,23 @@ const App: React.FC = () => {
           <Route index element={<Dashboard />} />
           <Route path="buildings" element={<BuildingsPage />} />
           <Route path="rooms" element={<RoomsPage />} />
+          <Route path="validate-rooms" element={<IdentityMapPage />} />
           <Route path="assets" element={<AssetsPage />} />
+          <Route path="penyusutan" element={<PenyusutanAsetPage />} />
           <Route path="polygons" element={<PolygonsPage />} />
           <Route path="schedules" element={<SchedulesPage />} />
           <Route path="auctions" element={<AdminAuctionsPage />} />
         </Route>
+
+        {/* Standalone admin print views — protected but outside AdminLayout so they print clean */}
+        <Route
+          path="/admin/cetak/dbr/:roomId"
+          element={
+            <ProtectedRoute>
+              <CetakDbrPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Catch-all redirect */}
         <Route path="*" element={<Navigate to="/" replace />} />

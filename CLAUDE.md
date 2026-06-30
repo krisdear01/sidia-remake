@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SIDIA (Sistem Informasi Digital Aset) is a full-stack digital asset management system for Universitas Udayana. It consists of:
+SIAU (Sistem Informasi Aset Udayana) — formerly named SIDIA — is a full-stack digital asset management system for Universitas Udayana. The repo folder is still `sidia-remake/`. It consists of:
 
 - **Frontend**: React 19 + TypeScript + Vite SPA at the repo root (`App.tsx`, `pages/`, `components/`, `api/`).
 - **Backend**: Laravel REST API under `backend/` exposed at `http://localhost:8000/api/v1`.
@@ -40,7 +40,7 @@ php artisan db:seed --class=HomepageRoomSeeder   # run one seeder
 `App.tsx` is the single source of routing (react-router v6). Three audience-distinct route groups share one `BrowserRouter`:
 1. **Public home / academic pages** — `HomePage`, `GedungPage`, `LaboratoriumPage`, `RuangRapatPage`, `PerpustakaanPage`.
 2. **E-Lelang (auction)** — `AuctionListPage`, `AuctionDetailPage`, bidder register/login.
-3. **Admin** — gated by `<ProtectedRoute>` which checks `isAuthenticated()` (token in `localStorage` under `sidia_auth_token`) and redirects to `/admin/login`. Admin screens live inside `<AdminLayout>` and cover buildings, rooms, assets, polygons, schedules, auctions.
+3. **Admin** — gated by `<ProtectedRoute>` which checks `isAuthenticated()` (token in `localStorage` under `siau_auth_token`) and redirects to `/admin/login`. Admin screens live inside `<AdminLayout>` and cover buildings, rooms, assets, polygons, schedules, auctions.
 
 `components/AssetMap.tsx` uses Leaflet to render polygons from the backend's GeoJSON endpoint; `DataPolygon_SHP_Unud.geojson` at the root is the source asset that has been imported into the DB.
 

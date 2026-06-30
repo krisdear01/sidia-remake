@@ -36,7 +36,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 };
 
 const TYPE_LABELS: Record<string, string> = {
-    auction: 'Lelang',
+    auction: 'Tender',
     rent: 'Sewa',
     facility_rent: 'Fasilitas',
 };
@@ -105,14 +105,14 @@ export const AdminAuctionsPage: React.FC = () => {
             setShowDeleteConfirm(null);
             loadAuctions();
         } catch (error: any) {
-            alert(error.message || 'Gagal menghapus lelang');
+            alert(error.message || 'Gagal menghapus tender');
         } finally {
             setActionLoading(false);
         }
     };
 
     const handleDetermineWinner = async (id: number) => {
-        if (!confirm('Tentukan pemenang lelang ini?')) return;
+        if (!confirm('Tentukan pemenang tender ini?')) return;
 
         setActionLoading(true);
         try {
@@ -149,15 +149,15 @@ export const AdminAuctionsPage: React.FC = () => {
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">E-Lelang & Sewa</h1>
-                    <p className="text-slate-500">Kelola lelang, sewa, dan fasilitas</p>
+                    <h1 className="text-2xl font-bold text-slate-900">E-Tender & Sewa</h1>
+                    <p className="text-slate-500">Kelola tender, sewa, dan fasilitas</p>
                 </div>
                 <button
                     onClick={() => setShowCreateModal(true)}
                     className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors"
                 >
                     <Plus size={20} />
-                    Buat Lelang Baru
+                    Buat Tender Baru
                 </button>
             </div>
 
@@ -169,7 +169,7 @@ export const AdminAuctionsPage: React.FC = () => {
                             <Gavel className="text-blue-600" size={24} />
                         </div>
                         <div>
-                            <p className="text-sm text-slate-500">Total Lelang</p>
+                            <p className="text-sm text-slate-500">Total Tender</p>
                             <p className="text-2xl font-bold text-slate-900">
                                 {auctions.filter(a => a.auction_type === 'auction').length}
                             </p>
@@ -239,7 +239,7 @@ export const AdminAuctionsPage: React.FC = () => {
                         className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                         <option value="">Semua Tipe</option>
-                        <option value="auction">Lelang</option>
+                        <option value="auction">Tender</option>
                         <option value="rent">Sewa</option>
                         <option value="facility_rent">Fasilitas</option>
                     </select>
@@ -268,7 +268,7 @@ export const AdminAuctionsPage: React.FC = () => {
                 ) : auctions.length === 0 ? (
                     <div className="text-center py-20">
                         <Gavel className="mx-auto text-slate-300 mb-4" size={48} />
-                        <p className="text-slate-500">Belum ada lelang atau sewa</p>
+                        <p className="text-slate-500">Belum ada tender atau sewa</p>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -413,7 +413,7 @@ export const AdminAuctionsPage: React.FC = () => {
                                 <AlertCircle className="text-red-600" size={32} />
                             </div>
                             <h3 className="text-lg font-bold text-slate-900 mb-2">
-                                Hapus Lelang?
+                                Hapus Tender?
                             </h3>
                             <p className="text-slate-500 mb-6">
                                 Tindakan ini tidak dapat dibatalkan.
@@ -534,7 +534,7 @@ const AuctionFormModal: React.FC<{
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
                     <h3 className="text-lg font-bold text-slate-900">
-                        {auction ? 'Edit Lelang' : 'Buat Lelang Baru'}
+                        {auction ? 'Edit Tender' : 'Buat Tender Baru'}
                     </h3>
                     <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
                         <X size={24} />
@@ -642,14 +642,14 @@ const AuctionFormModal: React.FC<{
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1">
-                                Tipe Lelang <span className="text-red-500">*</span>
+                                Tipe Tender <span className="text-red-500">*</span>
                             </label>
                             <select
                                 value={formData.auction_type}
                                 onChange={(e) => updateField('auction_type', e.target.value)}
                                 className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             >
-                                <option value="auction">Lelang</option>
+                                <option value="auction">Tender</option>
                                 <option value="rent">Sewa</option>
                                 <option value="facility_rent">Sewa Fasilitas</option>
                             </select>

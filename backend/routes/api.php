@@ -15,12 +15,56 @@ use App\Http\Controllers\Api\BidderAuthController;
 use App\Http\Controllers\Api\AuctionController;
 use App\Http\Controllers\Api\BidController;
 use App\Http\Controllers\Api\AdminAuctionController;
+use App\Http\Controllers\Api\SiauProxyController;
+use App\Http\Controllers\Api\Admin\AdminSiauProxyController;
 
 /*
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
 */
+
+// SIAU Gateway ADMIN proxy — Sanctum-gated, injects SIAU_ADMIN_TOKEN server-side.
+// Browser MUST NOT know about this token. Routes mirror gateway /admin/identity-map/*.
+Route::prefix('v1/admin/siau')
+    ->middleware(['auth:sanctum', 'throttle:30,1'])
+    ->group(function () {
+        Route::get('/identity-map/unmatched', [AdminSiauProxyController::class, 'unmatched']);
+        Route::post('/identity-map/resync', [AdminSiauProxyController::class, 'resync']);
+        Route::put('/identity-map/{siisyanaId}', [AdminSiauProxyController::class, 'updateMapping'])
+            ->where('siisyanaId', '[0-9]+');
+
+        // Hibah assets (BETA)
+        Route::post('/hibah-assets', [AdminSiauProxyController::class, 'createHibahAsset']);
+        Route::delete('/hibah-assets/{id}', [AdminSiauProxyController::class, 'deleteHibahAsset'])
+            ->where('id', '[0-9]+');
+
+        // Room visibility (is_public toggle)
+        Route::put('/rooms/{id}/visibility', [AdminSiauProxyController::class, 'updateRoomVisibility'])
+            ->where('id', '[0-9]+');
+
+        // Daftar Barang Ruangan (DBR) — printable BMN export
+        Route::get('/rooms/{id}/dbr', [AdminSiauProxyController::class, 'roomDbr'])
+            ->where('id', '[0-9]+');
+    });
+
+// SIAU Gateway proxy (read-only, public, no auth — forwards to siau-gateway)
+Route::prefix('v1/siau')->middleware(['throttle:60,1'])->group(function () {
+    Route::get('/health', [SiauProxyController::class, 'health']);
+    Route::get('/buildings', [SiauProxyController::class, 'buildings']);
+    Route::get('/buildings/{id}', [SiauProxyController::class, 'building'])->where('id', '[0-9]+');
+    Route::get('/gedung-polygons', [SiauProxyController::class, 'gedungPolygons']);
+    Route::get('/land', [SiauProxyController::class, 'land']);
+    Route::get('/land/{id}', [SiauProxyController::class, 'landDetail'])->where('id', '[0-9]+');
+    Route::get('/rooms', [SiauProxyController::class, 'rooms']);
+    Route::get('/rooms/{id}', [SiauProxyController::class, 'room'])->where('id', '[0-9]+');
+    Route::get('/rooms/{id}/assets', [SiauProxyController::class, 'roomAssets'])->where('id', '[0-9]+');
+
+    Route::middleware('throttle:30,1')->group(function () {
+        Route::get('/rooms/{id}/schedule', [SiauProxyController::class, 'schedule'])->where('id', '[0-9]+');
+        Route::get('/rooms/{id}/availability', [SiauProxyController::class, 'availability'])->where('id', '[0-9]+');
+    });
+});
 
 // Public routes (no auth required)
 Route::prefix('v1')->group(function () {
@@ -59,8 +103,8 @@ Route::prefix('v1')->group(function () {
     Route::get('/schedules', [ScheduleController::class, 'index']);
     Route::get('/schedules/{schedule}', [ScheduleController::class, 'show']);
 
-    // Auth
-    Route::post('/auth/login', [AuthController::class, 'login']);
+    // Auth — throttled to deter brute-force
+    Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
 
     // ==================== E-LELANG PUBLIC ROUTES ====================
 

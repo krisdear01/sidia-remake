@@ -6,6 +6,8 @@ use App\Domain\Mapping\RoomMapper;
 use App\Domain\Rules\RoomReadinessRule;
 use App\Support\CachedRows;
 use App\Support\JsonEnvelope;
+use App\Support\RoomCache;
+use App\Support\RoomVisibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -31,7 +33,7 @@ class RoomController extends Controller
             return JsonEnvelope::validation('id_unit must be integer', $request->path());
         }
 
-        $key = "siau:v1:rooms:list:c{$cursor}:l{$limit}:g" . ($idGedung ?? '_') . ':u' . ($idUnit ?? '_');
+        $key = "siau:v3:rooms:list:c{$cursor}:l{$limit}:g" . ($idGedung ?? '_') . ':u' . ($idUnit ?? '_');
         [$rows, $hit] = CachedRows::rememberMany($key, self::TTL_LIST, function () use ($limit, $cursor, $idGedung, $idUnit) {
             $params = [$cursor];
             $where = 'r.is_deleted = 0 AND r.id > ?';
@@ -39,7 +41,7 @@ class RoomController extends Controller
             if ($idUnit !== null) { $where .= ' AND r.id_unit = ?'; $params[] = (int) $idUnit; }
             $params[] = $limit;
 
-            return DB::connection('siisyana_ro')->select(
+            $rows = DB::connection('siisyana_ro')->select(
                 'SELECT r.id, r.kode_ruangan, r.nama, r.max_kapasitas, r.is_valid, r.is_renovasi, '
                 . 'r.id_gedung, r.id_unit, r.id_jenis_ruangan, '
                 . 'g.kode_gedung AS g_kode, g.nama AS g_nama, g.latitude AS g_lat, g.longitude AS g_lng, '
@@ -53,9 +55,62 @@ class RoomController extends Controller
                 . 'ORDER BY r.id ASC LIMIT ?',
                 $params
             );
+
+            // Bulk asset_count: one grouped query for ALL room ids on this
+            // page instead of N per-row scalar lookups. Mirrors the placement
+            // logic in show(): "latest barang_ruangan_histories per id_barang
+            // pointing at this room, intersected with non-deleted barangs".
+            if (!empty($rows)) {
+                $ids = array_map(fn($r) => (int) $r->id, $rows);
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                $countRows = DB::connection('siisyana_ro')->select(
+                    'SELECT brh.id_ruangan, COUNT(*) AS c FROM barangs_latest b '
+                    . 'INNER JOIN barang_ruangan_histories brh ON brh.id_barang = b.id '
+                    . 'INNER JOIN (SELECT id_barang, MAX(id) AS max_id FROM barang_ruangan_histories GROUP BY id_barang) latest '
+                    . 'ON brh.id = latest.max_id '
+                    . "WHERE b.dihapus = 0 AND brh.id_ruangan IN ({$placeholders}) "
+                    . 'GROUP BY brh.id_ruangan',
+                    $ids
+                );
+                $countMap = [];
+                foreach ($countRows as $cr) {
+                    $countMap[(int) $cr->id_ruangan] = (int) $cr->c;
+                }
+
+                // Add hibah counts (gateway-local) on top — single grouped query.
+                $hibahCounts = DB::connection('gateway')->table('hibah_assets')
+                    ->selectRaw('id_ruangan, COUNT(*) AS c')
+                    ->whereIn('id_ruangan', $ids)
+                    ->groupBy('id_ruangan')
+                    ->get();
+                foreach ($hibahCounts as $hc) {
+                    $countMap[(int) $hc->id_ruangan] = ($countMap[(int) $hc->id_ruangan] ?? 0) + (int) $hc->c;
+                }
+
+                // Visibility: rooms with no row default to public (true).
+                $visRows = DB::connection('gateway')->table('room_visibility')
+                    ->whereIn('siisyana_room_id', $ids)
+                    ->pluck('is_public', 'siisyana_room_id');
+
+                // Attach as synthetic properties so the cached array carries them.
+                foreach ($rows as $r) {
+                    $r->asset_count = $countMap[(int) $r->id] ?? 0;
+                    $r->is_public = isset($visRows[(int) $r->id]) ? (bool) $visRows[(int) $r->id] : true;
+                }
+            }
+
+            return $rows;
         });
 
-        $data = array_map(fn($r) => RoomMapper::map($r), $rows);
+        $data = array_map(
+            fn($r) => RoomMapper::map(
+                $r,
+                null,
+                isset($r->asset_count) ? (int) $r->asset_count : null,
+                isset($r->is_public) ? (bool) $r->is_public : null,
+            ),
+            $rows
+        );
         $nextCursor = !empty($rows) ? end($rows)->id : null;
 
         return JsonEnvelope::ok(
@@ -75,7 +130,18 @@ class RoomController extends Controller
             return JsonEnvelope::validation('id must be a positive integer', $request->path());
         }
 
-        $key = "siau:v1:rooms:{$id}";
+        if (!RoomVisibility::isAccessible((int) $id, $request)) {
+            return response()->json([
+                'type' => 'https://siau.unud.ac.id/errors/forbidden',
+                'title' => 'Forbidden',
+                'status' => 403,
+                'code' => 'ROOM_PRIVATE',
+                'detail' => 'This room is private; detail access requires admin authentication.',
+                'instance' => $request->path(),
+            ], 403, ['Content-Type' => 'application/problem+json']);
+        }
+
+        $key = RoomCache::key((int) $id, 'detail');
         [$row, $hit] = CachedRows::rememberOne($key, self::TTL_DETAIL, function () use ($id) {
             $rows = DB::connection('siisyana_ro')->select(
                 'SELECT r.id, r.kode_ruangan, r.nama, r.max_kapasitas, r.is_valid, r.is_renovasi, '
@@ -107,15 +173,18 @@ class RoomController extends Controller
             . 'WHERE brh.id_ruangan = ?';
 
         $assetCount = CachedRows::rememberScalar(
-            "siau:v1:rooms:{$id}:asset_count",
+            RoomCache::key((int) $id, 'asset_count'),
             self::TTL_ASSET_COUNT,
             function () use ($id, $currentPlacementSql) {
-                $r = DB::connection('siisyana_ro')->select(
+                $siisyana = DB::connection('siisyana_ro')->select(
                     'SELECT COUNT(*) AS c FROM barangs_latest b '
                     . "WHERE b.dihapus = 0 AND b.id IN ({$currentPlacementSql})",
                     [(int) $id]
                 );
-                return (int) ($r[0]->c ?? 0);
+                $hibah = DB::connection('gateway')->table('hibah_assets')
+                    ->where('id_ruangan', (int) $id)
+                    ->count();
+                return (int) ($siisyana[0]->c ?? 0) + (int) $hibah;
             }
         );
 
@@ -127,8 +196,13 @@ class RoomController extends Controller
         $codes = array_map(fn($x) => (int) $x->kondisi_terakhir, $kondisi);
         $kesiapan = RoomReadinessRule::derive($codes, ((int) ($row->is_renovasi ?? 0)) === 1);
 
+        $visRow = DB::connection('gateway')->table('room_visibility')
+            ->where('siisyana_room_id', (int) $id)
+            ->value('is_public');
+        $isPublic = $visRow === null ? true : (bool) $visRow;
+
         return JsonEnvelope::ok(
-            RoomMapper::map($row, $kesiapan, $assetCount),
+            RoomMapper::map($row, $kesiapan, $assetCount, $isPublic),
             meta: ['cache' => ['hit' => $hit, 'ttl_seconds' => self::TTL_DETAIL], 'source' => 'siisyana'],
             links: [
                 'self' => "/api/v1/rooms/{$id}",

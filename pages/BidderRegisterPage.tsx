@@ -133,7 +133,7 @@ export const BidderRegisterPage: React.FC = () => {
                             to="/lelang"
                             className="block w-full py-3 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
                         >
-                            Kembali ke Daftar Lelang
+                            Kembali ke Daftar Tender
                         </Link>
                     </div>
                 </div>
@@ -150,15 +150,15 @@ export const BidderRegisterPage: React.FC = () => {
                     className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6"
                 >
                     <ArrowLeft size={20} />
-                    Kembali ke Daftar Lelang
+                    Kembali ke Daftar Tender
                 </Link>
 
                 <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
                     {/* Header */}
                     <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-8">
-                        <h1 className="text-2xl font-bold mb-2">Daftar Peserta Lelang</h1>
+                        <h1 className="text-2xl font-bold mb-2">Daftar Peserta Tender</h1>
                         <p className="text-blue-200">
-                            Lengkapi data berikut untuk mendaftar sebagai peserta lelang dan sewa aset
+                            Lengkapi data berikut untuk mendaftar sebagai peserta tender dan sewa aset
                         </p>
                     </div>
 
@@ -431,7 +431,7 @@ export const BidderRegisterPage: React.FC = () => {
                                     <ul className="text-sm text-blue-800 space-y-2">
                                         <li>• Setelah mendaftar, Anda akan menerima email verifikasi</li>
                                         <li>• Dokumen KTP/NPWP akan diverifikasi oleh admin dalam 1-3 hari kerja</li>
-                                        <li>• Setelah verifikasi selesai, Anda dapat mengikuti lelang dan sewa aset</li>
+                                        <li>• Setelah verifikasi selesai, Anda dapat mengikuti tender dan sewa aset</li>
                                     </ul>
                                 </div>
 

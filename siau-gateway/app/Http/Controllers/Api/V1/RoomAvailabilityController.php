@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Domain\RoomIdentityResolver;
 use App\Support\CachedRows;
 use App\Support\JsonEnvelope;
+use App\Support\RoomVisibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -23,6 +24,17 @@ class RoomAvailabilityController extends Controller
     {
         if (!ctype_digit($id)) {
             return JsonEnvelope::validation('id must be a positive integer', $request->path());
+        }
+
+        if (!RoomVisibility::isAccessible((int) $id, $request)) {
+            return response()->json([
+                'type' => 'https://siau.unud.ac.id/errors/forbidden',
+                'title' => 'Forbidden',
+                'status' => 403,
+                'code' => 'ROOM_PRIVATE',
+                'detail' => 'This room is private; availability access requires admin authentication.',
+                'instance' => $request->path(),
+            ], 403, ['Content-Type' => 'application/problem+json']);
         }
 
         $tz = new \DateTimeZone('Asia/Makassar');

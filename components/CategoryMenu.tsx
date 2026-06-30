@@ -18,7 +18,7 @@ export const CategoryMenu: React.FC = () => {
     { id: 'lab', label: 'Laboratorium', icon: <Microscope size={32} />, href: '/laboratorium' },
     { id: 'rapat', label: 'Ruang Rapat', icon: <Users size={32} />, href: '/ruang-rapat' },
     { id: 'perpus', label: 'Perpustakaan', icon: <BookOpen size={32} />, href: '/perpustakaan' },
-    { id: 'lelang', label: 'E-Lelang/Sewa', icon: <Gavel size={32} />, href: '/lelang' },
+    { id: 'lelang', label: 'E-Tender/Sewa', icon: <Gavel size={32} />, href: '/lelang' },
     { id: 'lainnya', label: 'Lainnya', icon: <MoreHorizontal size={32} /> },
   ];
 

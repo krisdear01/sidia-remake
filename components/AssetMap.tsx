@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
+import { MapDetailModal } from './MapDetailModal';
+import { siauApi } from '../api/client';
+import type { PolygonFeatureProperties } from '../types';
+
+const fmtM2 = (n: any) => (n == null ? '-' : `${Number(n).toLocaleString('id-ID')} M²`);
+const esc = (s: any) =>
+  String(s ?? '-').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 // Unit/Faculty configuration with colors matching the reference image
 const UNIT_CONFIG = {
@@ -41,14 +48,104 @@ const createShpToUnitMap = () => {
 
 const SHP_TO_UNIT = createShpToUnitMap();
 
-export const AssetMap: React.FC = () => {
+interface AssetMapProps {
+  /** Homepage map: show only land/tanah parcels, hide building-linked polygons. */
+  landOnly?: boolean;
+}
+
+export const AssetMap: React.FC<AssetMapProps> = ({ landOnly = false }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
+  const drawGroupRef = useRef<L.LayerGroup | null>(null);
+  const selectedLayerRef = useRef<L.Layer | null>(null);
   const initialBoundsSet = useRef(false);
   const [selectedFaculties, setSelectedFaculties] = useState<Set<string>>(new Set());
   const [geoJsonData, setGeoJsonData] = useState<any>(null);
   const [hoveredFeature, setHoveredFeature] = useState<string | null>(null);
+
+  // Detail modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalFeature, setModalFeature] = useState<PolygonFeatureProperties | null>(null);
+  const [modalCentroid, setModalCentroid] = useState<[number, number] | null>(null);
+
+  // Open the detail modal for a clicked polygon, remembering its layer so the
+  // modal's "Lihat" action can fit the map to its bounds.
+  const openDetail = (props: any, layer: L.Layer) => {
+    selectedLayerRef.current = layer;
+    const c = (layer as any).getBounds?.().getCenter?.();
+    setModalCentroid(c ? [c.lat, c.lng] : null);
+    setModalFeature(props as PolygonFeatureProperties);
+    setModalOpen(true);
+    mapRef.current?.closePopup();
+  };
+
+  const handleLihat = () => {
+    const layer: any = selectedLayerRef.current;
+    if (layer?.getBounds && mapRef.current) {
+      mapRef.current.fitBounds(layer.getBounds(), { padding: [40, 40] });
+      setModalOpen(false);
+    }
+  };
+
+  // Build the click popup: shows legacy-style metadata (fetched live from
+  // SIISYANA when the polygon is linked) plus a "Lihat Detail" button.
+  const openPopup = (props: any, layer: L.Layer) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const center = (layer as any).getBounds().getCenter();
+    const el = document.createElement('div');
+    el.style.minWidth = '220px';
+    el.innerHTML = `<div style="font-weight:700;font-size:14px;margin-bottom:6px">${esc(props.name)}</div>
+      <div style="color:#64748b;font-size:12px">Memuat data...</div>`;
+
+    const popup = L.popup({ maxWidth: 280 }).setLatLng(center).setContent(el).openOn(map);
+
+    const renderRows = (rows: [string, any][]) =>
+      rows.map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px solid #f1f5f9">
+        <span style="color:#64748b;font-size:12px">${k}</span>
+        <span style="font-weight:600;font-size:12px;text-align:right">${esc(v)}</span></div>`).join('');
+
+    const mount = (titleHtml: string, rowsHtml: string) => {
+      el.innerHTML = `<div style="font-weight:700;font-size:14px;margin-bottom:6px">${titleHtml}</div>${rowsHtml}`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Lihat Detail';
+      btn.style.cssText = 'margin-top:10px;width:100%;background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px;font-size:13px;font-weight:600;cursor:pointer';
+      btn.onclick = () => openDetail(props, layer);
+      el.appendChild(btn);
+      popup.update();
+    };
+
+    const type = props.asset_type;
+    const sid = type === 'bangunan' ? props.siisyana_gedung_id : type === 'tanah' ? props.siisyana_tanah_id : null;
+
+    if (!type || !sid) {
+      mount(esc(props.name), renderRows([['Luas', fmtM2(props.land_area)]]));
+      return;
+    }
+
+    if (type === 'tanah') {
+      siauApi.land.get(sid).then((r: any) => {
+        const d = r.data;
+        mount(esc(props.name), renderRows([
+          ['Bukti Kepemilikan', d.bukti_kepemilikan],
+          ['Nomor KIB', d.nomor_kib],
+          ['Luas Total', fmtM2(d.luas_total)],
+          ['Luas Tidak Terpakai', fmtM2(d.luas_tidak_terpakai)],
+        ]));
+      }).catch(() => mount(esc(props.name), renderRows([['Luas', fmtM2(props.land_area)]])));
+    } else {
+      siauApi.buildings.get(sid).then((r: any) => {
+        const d = r.data;
+        mount(esc(d.nama || props.name), renderRows([
+          ['Kode Aset', d.kode],
+          ['Nomor KIB', d.nomor_kib],
+          ['Nama Gedung', d.nama],
+          ['Luas Gedung', fmtM2(d.luas_gedung)],
+        ]));
+      }).catch(() => mount(esc(props.name), renderRows([['Luas', fmtM2(props.land_area)]])));
+    }
+  };
 
   // Load GeoJSON data - try API first, fallback to static file
   useEffect(() => {
@@ -100,13 +197,29 @@ export const AssetMap: React.FC = () => {
       zoomControl: false,
     });
 
-    // Add tile layer (OpenStreetMap)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // Base layers (legacy parity: OSM + Google satellite)
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
     }).addTo(map);
 
-    // Add zoom control at bottom left
+    const google = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+      attribution: '&copy; Google',
+      maxZoom: 21,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    });
+
+    // Persistent overlay group ("drawlayer") that holds the polygon GeoJSON.
+    const drawGroup = L.layerGroup().addTo(map);
+    drawGroupRef.current = drawGroup;
+
+    L.control.layers(
+      { osm, google },
+      { drawlayer: drawGroup },
+      { position: 'topleft', collapsed: false }
+    ).addTo(map);
+
+    // Add zoom control at top left
     L.control.zoom({ position: 'topleft' }).addTo(map);
 
     mapRef.current = map;
@@ -126,24 +239,28 @@ export const AssetMap: React.FC = () => {
   useEffect(() => {
     if (!mapRef.current || !geoJsonData) return;
 
-    // Remove existing layer
+    // Remove existing layer from the drawlayer overlay group
     if (geoJsonLayerRef.current) {
-      mapRef.current.removeLayer(geoJsonLayerRef.current);
+      drawGroupRef.current?.removeLayer(geoJsonLayerRef.current);
     }
+
+    // Homepage shows land/tanah only: drop polygons linked to a building.
+    const baseData = landOnly
+      ? { ...geoJsonData, features: geoJsonData.features.filter((f: any) => f.properties?.asset_type !== 'bangunan') }
+      : geoJsonData;
 
     // Filter features if faculties are selected
     const filteredData = selectedFaculties.size > 0
       ? {
-        ...geoJsonData,
-        features: geoJsonData.features.filter((f: any) => {
+        ...baseData,
+        features: baseData.features.filter((f: any) => {
           const props = f.properties;
           // Check if this is API data (has fill_color/faculty) or static data (has NO.SHP)
           const isApiData = 'fill_color' in props;
 
           if (isApiData) {
-            // API data: filter by faculty property
-            const faculty = props.faculty || 'Unknown';
-            return selectedFaculties.has(faculty);
+            // API data: filter by polygon name (each zone / each faculty is its own legend row)
+            return selectedFaculties.has(props.name);
           } else {
             // Static data: filter by SHP to unit mapping
             const shp = props?.['NO.SHP'];
@@ -152,7 +269,7 @@ export const AssetMap: React.FC = () => {
           }
         }),
       }
-      : geoJsonData;
+      : baseData;
 
     // Create GeoJSON layer
     const geoJsonLayer = L.geoJSON(filteredData, {
@@ -204,18 +321,7 @@ export const AssetMap: React.FC = () => {
           layer.on({
             mouseover: () => setHoveredFeature(featureId),
             mouseout: () => setHoveredFeature(null),
-            click: () => {
-              L.popup()
-                .setLatLng((layer as any).getBounds().getCenter())
-                .setContent(`
-                  <div style="min-width: 150px;">
-                    <strong style="font-size: 14px;">${name}</strong>
-                    ${props.faculty ? `<br/><span style="color: #666; font-size: 12px;">${props.faculty}</span>` : ''}
-                    ${props.land_area ? `<br/><span style="color: #666; font-size: 11px;">Area: ${Number(props.land_area).toLocaleString('id-ID')} m²</span>` : ''}
-                  </div>
-                `)
-                .openOn(mapRef.current!);
-            },
+            click: () => openPopup(props, layer),
           });
 
           layer.bindTooltip(name, {
@@ -231,20 +337,7 @@ export const AssetMap: React.FC = () => {
           layer.on({
             mouseover: () => setHoveredFeature(shp),
             mouseout: () => setHoveredFeature(null),
-            click: () => {
-              if (unit) {
-                L.popup()
-                  .setLatLng((layer as any).getBounds().getCenter())
-                  .setContent(`
-                    <div style="min-width: 150px;">
-                      <strong style="font-size: 14px;">${unit}</strong>
-                      <br/>
-                      <span style="color: #666; font-size: 12px;">ID: ${shp}</span>
-                    </div>
-                  `)
-                  .openOn(mapRef.current!);
-              }
-            },
+            click: () => openPopup({ ...props, name: unit || props?.['NO.SHP'] || 'Aset' }, layer),
           });
 
           // Add tooltip
@@ -259,7 +352,7 @@ export const AssetMap: React.FC = () => {
       },
     });
 
-    geoJsonLayer.addTo(mapRef.current);
+    drawGroupRef.current?.addLayer(geoJsonLayer);
     geoJsonLayerRef.current = geoJsonLayer;
 
     // Log layer count for debugging
@@ -284,7 +377,7 @@ export const AssetMap: React.FC = () => {
         initialBoundsSet.current = true;
       }, 200);
     }
-  }, [geoJsonData, selectedFaculties, hoveredFeature]);
+  }, [geoJsonData, selectedFaculties, hoveredFeature, landOnly]);
 
   // Handle legend item click
   const handleLegendClick = (faculty: string) => {
@@ -319,26 +412,37 @@ export const AssetMap: React.FC = () => {
     const isApiData = geoJsonData.features.some((f: any) => 'fill_color' in f.properties);
 
     if (isApiData) {
-      // Build from API data faculties
-      const facultyMap = new Map<string, { color: string; count: number }>();
+      // Build one legend row per polygon NAME, keeping layer info for sectioning.
+      // Multiple polygons sharing a name (e.g. two "FEB" geometries) collapse
+      // into one row.
+      const itemMap = new Map<string, { color: string; count: number; layer: string }>();
 
       geoJsonData.features.forEach((f: any) => {
-        const faculty = f.properties.faculty || 'Unknown';
+        const name = f.properties.name || 'Unnamed';
+        const layer = f.properties.layer || 'other';
         const color = f.properties.fill_color || '#3b82f6';
 
-        if (facultyMap.has(faculty)) {
-          const existing = facultyMap.get(faculty)!;
-          existing.count++;
+        if (itemMap.has(name)) {
+          itemMap.get(name)!.count++;
         } else {
-          facultyMap.set(faculty, { color, count: 1 });
+          itemMap.set(name, { color, count: 1, layer });
         }
       });
 
-      return Array.from(facultyMap.entries()).map(([name, data]) => ({
-        name,
-        color: data.color,
-        count: data.count,
-      }));
+      // Sort: zona first, then sebaran_fakultas, then anything else; alphabetical within each.
+      const layerOrder: Record<string, number> = {
+        zona: 0,
+        sebaran_fakultas: 1,
+      };
+
+      return Array.from(itemMap.entries())
+        .map(([name, data]) => ({ name, color: data.color, count: data.count, layer: data.layer }))
+        .sort((a, b) => {
+          const la = layerOrder[a.layer] ?? 99;
+          const lb = layerOrder[b.layer] ?? 99;
+          if (la !== lb) return la - lb;
+          return a.name.localeCompare(b.name);
+        });
     } else {
       // Use UNIT_CONFIG for static data
       return Object.entries(UNIT_CONFIG).map(([name, config]) => ({
@@ -378,32 +482,50 @@ export const AssetMap: React.FC = () => {
             <p className="text-xs text-slate-400 mt-0.5">Klik untuk menyorot</p>
           </div>
           <div className="max-h-[460px] overflow-y-auto p-2 space-y-0.5">
-            {legendItems.map((item) => {
-              const isSelected = selectedFaculties.has(item.name);
-              const isActive = selectedFaculties.size === 0 || isSelected;
+            {(() => {
+              const LAYER_LABELS: Record<string, string> = {
+                zona: 'Zona Kawasan',
+                sebaran_fakultas: 'Sebaran Fakultas',
+              };
+              let lastLayer: string | undefined;
+              return legendItems.map((item: any) => {
+                const isSelected = selectedFaculties.has(item.name);
+                const isActive = selectedFaculties.size === 0 || isSelected;
+                const showHeader = item.layer && item.layer !== lastLayer;
+                lastLayer = item.layer;
 
-              return (
-                <button
-                  key={item.name}
-                  onClick={() => handleLegendClick(item.name)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all ${isSelected
-                    ? 'bg-blue-50 ring-2 ring-blue-500'
-                    : isActive
-                      ? 'hover:bg-slate-50'
-                      : 'opacity-40 hover:opacity-60'
-                    }`}
-                >
-                  <div
-                    className="w-4 h-4 rounded flex-shrink-0 border border-slate-300"
-                    style={{ backgroundColor: item.color }}
-                  />
-                  <span className={`text-xs font-medium leading-tight ${isSelected ? 'text-blue-900' : 'text-slate-700'
-                    }`}>
-                    {item.name}
-                  </span>
-                </button>
-              );
-            })}
+                return (
+                  <React.Fragment key={item.name}>
+                    {showHeader && (
+                      <div className="px-2 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        {LAYER_LABELS[item.layer] ?? item.layer}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleLegendClick(item.name)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all ${isSelected
+                        ? 'bg-blue-50 ring-2 ring-blue-500'
+                        : isActive
+                          ? 'hover:bg-slate-50'
+                          : 'opacity-40 hover:opacity-60'
+                        }`}
+                    >
+                      <div
+                        className="w-4 h-4 rounded flex-shrink-0 border border-slate-300"
+                        style={{ backgroundColor: item.color }}
+                      />
+                      <span className={`text-xs font-medium leading-tight flex-1 ${isSelected ? 'text-blue-900' : 'text-slate-700'
+                        }`}>
+                        {item.name}
+                      </span>
+                      {item.count > 1 && (
+                        <span className="text-[10px] text-slate-400 font-mono">{item.count}</span>
+                      )}
+                    </button>
+                  </React.Fragment>
+                );
+              });
+            })()}
           </div>
         </div>
 
@@ -442,6 +564,14 @@ export const AssetMap: React.FC = () => {
           border-radius: 8px;
         }
       `}</style>
+
+      <MapDetailModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        feature={modalFeature}
+        centroid={modalCentroid}
+        onLihat={handleLihat}
+      />
     </div>
   );
 };

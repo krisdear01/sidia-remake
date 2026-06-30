@@ -21,6 +21,10 @@ class PolygonController extends Controller
             $query->where('location_id', $request->location_id);
         }
 
+        if ($request->filled('layer')) {
+            $query->where('layer', $request->string('layer'));
+        }
+
         $polygons = $query->get();
 
         return response()->json($polygons);
@@ -33,6 +37,9 @@ class PolygonController extends Controller
             'building_id' => 'nullable|exists:buildings,id',
             'faculty_id' => 'nullable|exists:faculties,id',
             'location_id' => 'nullable|exists:locations,id',
+            'siisyana_gedung_id' => 'nullable|integer|min:1',
+            'siisyana_tanah_id' => 'nullable|integer|min:1',
+            'asset_type' => 'nullable|string|in:bangunan,tanah',
             'geojson' => 'required|array',
             'fill_color' => 'string|max:7',
             'stroke_color' => 'string|max:7',
@@ -58,6 +65,9 @@ class PolygonController extends Controller
             'building_id' => 'nullable|exists:buildings,id',
             'faculty_id' => 'nullable|exists:faculties,id',
             'location_id' => 'nullable|exists:locations,id',
+            'siisyana_gedung_id' => 'nullable|integer|min:1',
+            'siisyana_tanah_id' => 'nullable|integer|min:1',
+            'asset_type' => 'nullable|string|in:bangunan,tanah',
             'geojson' => 'array',
             'fill_color' => 'string|max:7',
             'stroke_color' => 'string|max:7',
@@ -89,6 +99,10 @@ class PolygonController extends Controller
             $query->where('location_id', $request->location_id);
         }
 
+        if ($request->filled('layer')) {
+            $query->where('layer', $request->string('layer'));
+        }
+
         $polygons = $query->get();
 
         $features = $polygons->map(function ($polygon) {
@@ -98,12 +112,17 @@ class PolygonController extends Controller
                 'properties' => [
                     'id' => $polygon->id,
                     'name' => $polygon->name,
+                    'layer' => $polygon->layer,
                     'building' => $polygon->building?->name,
                     'faculty' => $polygon->faculty?->name,
                     'fill_color' => $polygon->fill_color,
                     'stroke_color' => $polygon->stroke_color,
                     'fill_opacity' => $polygon->fill_opacity,
                     'land_area' => $polygon->land_area,
+                    // SIISYANA linkage so the FE knows what to fetch on click.
+                    'asset_type' => $polygon->asset_type,
+                    'siisyana_gedung_id' => $polygon->siisyana_gedung_id,
+                    'siisyana_tanah_id' => $polygon->siisyana_tanah_id,
                 ],
             ];
         });

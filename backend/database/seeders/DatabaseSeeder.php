@@ -21,11 +21,22 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Create admin user
+        $adminPassword = env('SEED_ADMIN_PASSWORD');
+
+        if (empty($adminPassword)) {
+            if (! app()->environment('local', 'testing')) {
+                throw new \RuntimeException(
+                    'SEED_ADMIN_PASSWORD env var must be set when seeding outside local/testing environments.'
+                );
+            }
+            $adminPassword = 'admin123';
+            fwrite(STDERR, "WARNING: seeding admin with insecure dev password. Set SEED_ADMIN_PASSWORD to override.\n");
+        }
+
         User::create([
-            'name' => 'Admin SIDIA',
-            'email' => 'admin@sidia.unud.ac.id',
-            'password' => Hash::make('admin123'),
+            'name' => 'Admin SIAU',
+            'email' => env('SEED_ADMIN_EMAIL', 'admin@siau.unud.ac.id'),
+            'password' => Hash::make($adminPassword),
         ]);
 
         // Create categories

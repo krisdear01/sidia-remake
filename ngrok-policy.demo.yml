@@ -1,0 +1,11 @@
+# ngrok edge auth gate for the SIAU demo.
+# Anyone hitting the static domain must enter these credentials before
+# any request reaches Caddy/the backend.
+on_http_request:
+  - actions:
+      - type: basic-auth
+        config:
+          realm: "SIAU Demo — Universitas Udayana"
+          credentials:
+            - "siau:FS5ddavP7gTWGl"
+          enforce: true

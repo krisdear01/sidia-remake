@@ -1,362 +1,299 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, MapPin, Layers, ArrowLeft, Search, Filter, Users, Calendar, ChevronDown } from 'lucide-react';
+import L from 'leaflet';
+import { Building2, Layers, ArrowLeft, Search, Maximize2, RefreshCw, AlertCircle } from 'lucide-react';
+import { siauApi, SiauApiError } from '../api/client';
+import { MapDetailModal } from '../components/MapDetailModal';
+import type { GedungPolygonProperties, PolygonFeatureProperties } from '../types';
 
-// Mock data representing Indonesian university buildings (Udayana style)
-const MOCK_BUILDINGS = [
-    {
-        id: 1,
-        name: 'Gedung Rektorat',
-        code: 'GR-01',
-        faculty: 'Rektorat',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 4,
-        buildingArea: 5200,
-        yearBuilt: 1995,
-        condition: 'Baik',
-        description: 'Pusat administrasi universitas yang menaungi kantor Rektor, Wakil Rektor, dan unit-unit pendukung.',
-        image: 'https://images.unsplash.com/photo-1562774053-701939374585?w=400&h=300&fit=crop',
-        rooms: 48,
-    },
-    {
-        id: 2,
-        name: 'Gedung Fakultas Teknik',
-        code: 'FT-01',
-        faculty: 'Fakultas Teknik',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 5,
-        buildingArea: 8500,
-        yearBuilt: 2001,
-        condition: 'Baik',
-        description: 'Gedung utama Fakultas Teknik yang memiliki ruang kuliah, laboratorium, dan ruang dosen.',
-        image: 'https://images.unsplash.com/photo-1541829070764-84a7d30dd3f3?w=400&h=300&fit=crop',
-        rooms: 62,
-    },
-    {
-        id: 3,
-        name: 'Gedung Perpustakaan Pusat',
-        code: 'PP-01',
-        faculty: 'Unit Pelaksana Teknis',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 3,
-        buildingArea: 4800,
-        yearBuilt: 2005,
-        condition: 'Baik',
-        description: 'Perpustakaan pusat universitas dengan koleksi buku, jurnal, dan akses digital.',
-        image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=300&fit=crop',
-        rooms: 24,
-    },
-    {
-        id: 4,
-        name: 'Gedung Fakultas Ekonomi',
-        code: 'FE-01',
-        faculty: 'Fakultas Ekonomi dan Bisnis',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 4,
-        buildingArea: 6200,
-        yearBuilt: 1998,
-        condition: 'Baik',
-        description: 'Gedung utama FEB dengan fasilitas ruang kuliah dan pusat studi ekonomi.',
-        image: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=400&h=300&fit=crop',
-        rooms: 45,
-    },
-    {
-        id: 5,
-        name: 'Gedung Fakultas Hukum',
-        code: 'FH-01',
-        faculty: 'Fakultas Hukum',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 4,
-        buildingArea: 5800,
-        yearBuilt: 1997,
-        condition: 'Baik',
-        description: 'Gedung Fakultas Hukum dengan fasilitas moot court dan ruang seminar.',
-        image: 'https://images.unsplash.com/photo-1479839672679-a46483c0e7c8?w=400&h=300&fit=crop',
-        rooms: 38,
-    },
-    {
-        id: 6,
-        name: 'Gedung MIPA Terpadu',
-        code: 'MIPA-01',
-        faculty: 'Fakultas MIPA',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 5,
-        buildingArea: 7200,
-        yearBuilt: 2008,
-        condition: 'Baik',
-        description: 'Gedung terpadu FMIPA dengan laboratorium modern dan ruang penelitian.',
-        image: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=400&h=300&fit=crop',
-        rooms: 55,
-    },
-    {
-        id: 7,
-        name: 'Gedung Kedokteran',
-        code: 'FK-01',
-        faculty: 'Fakultas Kedokteran',
-        location: 'Kampus Denpasar',
-        floors: 6,
-        buildingArea: 9500,
-        yearBuilt: 2010,
-        condition: 'Baik',
-        description: 'Gedung Fakultas Kedokteran dengan fasilitas skills lab dan ruang anatomi.',
-        image: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=400&h=300&fit=crop',
-        rooms: 78,
-    },
-    {
-        id: 8,
-        name: 'Gedung Pertanian',
-        code: 'FP-01',
-        faculty: 'Fakultas Pertanian',
-        location: 'Kampus Bukit Jimbaran',
-        floors: 3,
-        buildingArea: 4500,
-        yearBuilt: 1996,
-        condition: 'Cukup',
-        description: 'Gedung Fakultas Pertanian dengan greenhouse dan laboratorium tanah.',
-        image: 'https://images.unsplash.com/photo-1464938050520-ef2571a9c3d8?w=400&h=300&fit=crop',
-        rooms: 32,
-    },
-];
+const JIMBARAN_CENTER: [number, number] = [-8.7965, 115.1725];
+// Main Bukit Jimbaran campus bounding box — used to frame the default map view
+// (buildings on other campuses are outliers that would otherwise zoom the map out).
+const JIMBARAN_BBOX = { latMin: -8.81, latMax: -8.78, lngMin: 115.16, lngMax: 115.19 };
 
-const FACULTIES = ['Semua Fakultas', 'Rektorat', 'Fakultas Teknik', 'Fakultas Ekonomi dan Bisnis', 'Fakultas Hukum', 'Fakultas MIPA', 'Fakultas Kedokteran', 'Fakultas Pertanian', 'Unit Pelaksana Teknis'];
-const LOCATIONS = ['Semua Lokasi', 'Kampus Bukit Jimbaran', 'Kampus Denpasar', 'Kampus Nias'];
+interface GedungFeature {
+  type: 'Feature';
+  geometry: any;
+  properties: GedungPolygonProperties;
+}
 
 export const GedungPage: React.FC = () => {
-    const [searchTerm, setSearchTerm] = useState('');
-    const [selectedFaculty, setSelectedFaculty] = useState('Semua Fakultas');
-    const [selectedLocation, setSelectedLocation] = useState('Semua Lokasi');
-    const [selectedBuilding, setSelectedBuilding] = useState<typeof MOCK_BUILDINGS[0] | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const layerByIdRef = useRef<Map<number, L.Path>>(new Map());
+  const geoLayerRef = useRef<L.GeoJSON | null>(null);
 
-    const filteredBuildings = useMemo(() => {
-        return MOCK_BUILDINGS.filter(building => {
-            const matchesSearch = building.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                building.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                building.faculty.toLowerCase().includes(searchTerm.toLowerCase());
+  const [features, setFeatures] = useState<GedungFeature[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<SiauApiError | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
-            const matchesFaculty = selectedFaculty === 'Semua Fakultas' || building.faculty === selectedFaculty;
-            const matchesLocation = selectedLocation === 'Semua Lokasi' || building.location === selectedLocation;
+  // Detail modal
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalFeature, setModalFeature] = useState<PolygonFeatureProperties | null>(null);
+  const [modalCentroid, setModalCentroid] = useState<[number, number] | null>(null);
 
-            return matchesSearch && matchesFaculty && matchesLocation;
+  // ---- data ----
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await siauApi.gedungPolygons();
+      setFeatures(res.data?.features ?? []);
+    } catch (e) {
+      setError(e instanceof SiauApiError ? e : new SiauApiError('UNKNOWN', 0, 'Gagal memuat peta gedung.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const openDetail = useCallback((props: GedungPolygonProperties) => {
+    setSelectedId(props.siisyana_gedung_id);
+    setModalCentroid(props.center ?? null);
+    setModalFeature({
+      asset_type: 'bangunan',
+      siisyana_gedung_id: props.siisyana_gedung_id,
+      siisyana_tanah_id: null,
+      name: props.nama ?? props.kode ?? 'Gedung',
+    } as PolygonFeatureProperties);
+    setModalOpen(true);
+  }, []);
+
+  // ---- map init (once) ----
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+    const map = L.map(mapContainerRef.current, { center: JIMBARAN_CENTER, zoom: 15, zoomControl: false });
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
+    }).addTo(map);
+    const google = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+      attribution: '&copy; Google', maxZoom: 21, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    });
+    L.control.layers({ osm, google }, {}, { position: 'topleft', collapsed: false }).addTo(map);
+    L.control.zoom({ position: 'topleft' }).addTo(map);
+    mapRef.current = map;
+    setTimeout(() => map.invalidateSize(), 100);
+    return () => { map.remove(); mapRef.current = null; };
+  }, []);
+
+  // ---- render polygons when data ready ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || features.length === 0) return;
+
+    if (geoLayerRef.current) map.removeLayer(geoLayerRef.current);
+    layerByIdRef.current.clear();
+
+    const jimbaranBounds = L.latLngBounds([]);
+    const layer = L.geoJSON({ type: 'FeatureCollection', features } as any, {
+      style: () => ({ color: '#1d4ed8', weight: 1.5, fillColor: '#3b82f6', fillOpacity: 0.35 }),
+      onEachFeature: (feature, lyr) => {
+        const props = feature.properties as GedungPolygonProperties;
+        const id = props.siisyana_gedung_id;
+        layerByIdRef.current.set(id, lyr as L.Path);
+        const c = props.center;
+        if (c && c[0] > JIMBARAN_BBOX.latMin && c[0] < JIMBARAN_BBOX.latMax && c[1] > JIMBARAN_BBOX.lngMin && c[1] < JIMBARAN_BBOX.lngMax) {
+          jimbaranBounds.extend((lyr as any).getBounds());
+        }
+        lyr.on({
+          mouseover: () => setHoveredId(id),
+          mouseout: () => { setHoveredId(null); (lyr as any).closeTooltip(); },
+          click: () => {
+            map.fitBounds((lyr as any).getBounds(), { padding: [40, 40], maxZoom: 18 });
+            openDetail(props);
+          },
         });
-    }, [searchTerm, selectedFaculty, selectedLocation]);
+        lyr.bindTooltip(props.nama ?? props.kode ?? '', { direction: 'top', sticky: true, className: 'gedung-tooltip' });
+      },
+    }).addTo(map);
 
-    const stats = useMemo(() => ({
-        totalBuildings: MOCK_BUILDINGS.length,
-        totalArea: MOCK_BUILDINGS.reduce((acc, b) => acc + b.buildingArea, 0),
-        totalRooms: MOCK_BUILDINGS.reduce((acc, b) => acc + b.rooms, 0),
-    }), []);
+    geoLayerRef.current = layer;
+    // Default view = main Jimbaran campus (not all polygons; some sit on other campuses).
+    try {
+      const target = jimbaranBounds.isValid() ? jimbaranBounds : layer.getBounds();
+      map.fitBounds(target, { padding: [30, 30], maxZoom: 17 });
+    } catch { /* empty */ }
+  }, [features, openDetail]);
 
-    return (
-        <div className="min-h-screen bg-slate-50">
-            {/* Header */}
-            <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-md">
-                <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-                    <div className="flex items-center gap-4">
-                        <Link to="/" className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors">
-                            <ArrowLeft size={20} />
-                            <span className="hidden sm:inline">Kembali</span>
-                        </Link>
-                        <div className="h-6 w-px bg-slate-200" />
-                        <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-500/20">
-                                <Building2 className="text-white" size={20} />
-                            </div>
-                            <div>
-                                <h1 className="text-xl font-bold tracking-tight text-slate-900">Gedung</h1>
-                                <p className="text-xs text-slate-500">Inventaris Gedung Universitas</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </header>
+  // ---- restyle on hover / selection ----
+  // NOTE: do NOT call bringToFront() here — re-inserting the SVG node mid-hover
+  // makes Leaflet skip the mouseout event and leaves tooltips stuck on the map.
+  useEffect(() => {
+    layerByIdRef.current.forEach((lyr, id) => {
+      const active = id === hoveredId || id === selectedId;
+      lyr.setStyle({
+        color: active ? '#1e3a8a' : '#1d4ed8',
+        weight: active ? 3 : 1.5,
+        fillColor: active ? '#2563eb' : '#3b82f6',
+        fillOpacity: active ? 0.7 : 0.35,
+      });
+    });
+  }, [hoveredId, selectedId]);
 
-            <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-                {/* Stats Cards */}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-8">
-                    <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 p-6 text-white shadow-lg shadow-blue-500/20">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-blue-100 text-sm font-medium">Total Gedung</p>
-                                <p className="text-3xl font-bold mt-1">{stats.totalBuildings}</p>
-                            </div>
-                            <Building2 size={40} className="text-blue-300" />
-                        </div>
-                    </div>
-                    <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 p-6 text-white shadow-lg shadow-emerald-500/20">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-emerald-100 text-sm font-medium">Total Luas</p>
-                                <p className="text-3xl font-bold mt-1">{stats.totalArea.toLocaleString('id-ID')} m²</p>
-                            </div>
-                            <Layers size={40} className="text-emerald-300" />
-                        </div>
-                    </div>
-                    <div className="rounded-2xl bg-gradient-to-br from-purple-500 to-purple-600 p-6 text-white shadow-lg shadow-purple-500/20">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-purple-100 text-sm font-medium">Total Ruangan</p>
-                                <p className="text-3xl font-bold mt-1">{stats.totalRooms}</p>
-                            </div>
-                            <Users size={40} className="text-purple-300" />
-                        </div>
-                    </div>
-                </div>
+  const focusOnMap = useCallback((props: GedungPolygonProperties) => {
+    const map = mapRef.current;
+    const lyr = layerByIdRef.current.get(props.siisyana_gedung_id);
+    if (map && lyr) map.fitBounds((lyr as any).getBounds(), { padding: [40, 40], maxZoom: 18 });
+    else if (map && props.center) map.setView(props.center, 18);
+  }, []);
 
-                {/* Search and Filters */}
-                <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100 mb-8">
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                        {/* Search */}
-                        <div className="relative">
-                            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                <Search className="h-5 w-5 text-slate-400" />
-                            </div>
-                            <input
-                                type="text"
-                                placeholder="Cari gedung, kode, atau fakultas..."
-                                className="block w-full rounded-lg border border-slate-300 bg-slate-50 p-3 pl-10 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:ring-blue-500 sm:text-sm transition-all"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
-                        </div>
+  const handleLihat = useCallback(() => {
+    if (modalFeature) {
+      const lyr = layerByIdRef.current.get(modalFeature.siisyana_gedung_id as number);
+      if (mapRef.current && lyr) mapRef.current.fitBounds((lyr as any).getBounds(), { padding: [40, 40], maxZoom: 18 });
+    }
+    setModalOpen(false);
+  }, [modalFeature]);
 
-                        {/* Faculty Filter */}
-                        <div className="relative">
-                            <select
-                                value={selectedFaculty}
-                                onChange={(e) => setSelectedFaculty(e.target.value)}
-                                className="block w-full appearance-none rounded-lg border border-slate-300 bg-slate-50 p-3 text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-blue-500 sm:text-sm transition-all"
-                            >
-                                {FACULTIES.map(f => <option key={f} value={f}>{f}</option>)}
-                            </select>
-                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                        </div>
+  // ---- derived ----
+  const filtered = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const list = features.map((f) => f.properties);
+    if (!q) return list;
+    return list.filter((p) => (p.nama ?? '').toLowerCase().includes(q) || (p.kode ?? '').toLowerCase().includes(q));
+  }, [features, searchTerm]);
 
-                        {/* Location Filter */}
-                        <div className="relative">
-                            <select
-                                value={selectedLocation}
-                                onChange={(e) => setSelectedLocation(e.target.value)}
-                                className="block w-full appearance-none rounded-lg border border-slate-300 bg-slate-50 p-3 text-slate-900 focus:border-blue-500 focus:bg-white focus:ring-blue-500 sm:text-sm transition-all"
-                            >
-                                {LOCATIONS.map(l => <option key={l} value={l}>{l}</option>)}
-                            </select>
-                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                        </div>
-                    </div>
-                </div>
+  const stats = useMemo(() => ({
+    total: features.length,
+    totalArea: features.reduce((acc, f) => acc + (f.properties.luas ?? 0), 0),
+  }), [features]);
 
-                {/* Buildings Grid */}
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {filteredBuildings.map((building) => (
-                        <div
-                            key={building.id}
-                            onClick={() => setSelectedBuilding(building)}
-                            className="group cursor-pointer rounded-2xl bg-white p-4 shadow-sm border border-slate-100 hover:shadow-lg hover:-translate-y-1 transition-all duration-300"
-                        >
-                            <div className="relative mb-4 overflow-hidden rounded-xl">
-                                <img
-                                    src={building.image}
-                                    alt={building.name}
-                                    className="h-40 w-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                />
-                                <div className="absolute top-2 left-2 rounded-lg bg-white/90 backdrop-blur-sm px-2 py-1 text-xs font-semibold text-slate-700">
-                                    {building.code}
-                                </div>
-                                <div className={`absolute top-2 right-2 rounded-lg px-2 py-1 text-xs font-semibold ${building.condition === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                                    }`}>
-                                    {building.condition}
-                                </div>
-                            </div>
-
-                            <h3 className="font-bold text-slate-900 mb-1 line-clamp-1">{building.name}</h3>
-                            <p className="text-sm text-blue-600 font-medium mb-2">{building.faculty}</p>
-
-                            <div className="flex items-center gap-4 text-xs text-slate-500">
-                                <div className="flex items-center gap-1">
-                                    <Layers size={14} />
-                                    <span>{building.floors} Lantai</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                    <Users size={14} />
-                                    <span>{building.rooms} Ruang</span>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-1 mt-2 text-xs text-slate-400">
-                                <MapPin size={14} />
-                                <span>{building.location}</span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-
-                {filteredBuildings.length === 0 && (
-                    <div className="text-center py-12">
-                        <Building2 size={48} className="mx-auto text-slate-300 mb-4" />
-                        <p className="text-slate-500">Tidak ada gedung yang ditemukan.</p>
-                    </div>
-                )}
-            </main>
-
-            {/* Detail Modal */}
-            {selectedBuilding && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-                        <div className="relative">
-                            <img
-                                src={selectedBuilding.image}
-                                alt={selectedBuilding.name}
-                                className="w-full h-64 object-cover rounded-t-2xl"
-                            />
-                            <button
-                                onClick={() => setSelectedBuilding(null)}
-                                className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm rounded-full p-2 hover:bg-white transition-colors"
-                            >
-                                <ArrowLeft size={20} />
-                            </button>
-                        </div>
-                        <div className="p-6">
-                            <div className="flex items-start justify-between mb-4">
-                                <div>
-                                    <span className="text-blue-600 font-mono text-sm font-semibold">{selectedBuilding.code}</span>
-                                    <h2 className="text-2xl font-bold text-slate-900 mt-1">{selectedBuilding.name}</h2>
-                                    <p className="text-slate-600 mt-1">{selectedBuilding.faculty}</p>
-                                </div>
-                                <div className={`rounded-lg px-3 py-1 text-sm font-semibold ${selectedBuilding.condition === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                                    }`}>
-                                    {selectedBuilding.condition}
-                                </div>
-                            </div>
-
-                            <p className="text-slate-600 mb-6">{selectedBuilding.description}</p>
-
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                <div className="rounded-xl bg-slate-50 p-4">
-                                    <p className="text-slate-500 text-sm">Jumlah Lantai</p>
-                                    <p className="text-2xl font-bold text-slate-900">{selectedBuilding.floors}</p>
-                                </div>
-                                <div className="rounded-xl bg-slate-50 p-4">
-                                    <p className="text-slate-500 text-sm">Total Ruangan</p>
-                                    <p className="text-2xl font-bold text-slate-900">{selectedBuilding.rooms}</p>
-                                </div>
-                                <div className="rounded-xl bg-slate-50 p-4">
-                                    <p className="text-slate-500 text-sm">Luas Bangunan</p>
-                                    <p className="text-2xl font-bold text-slate-900">{selectedBuilding.buildingArea.toLocaleString('id-ID')} m²</p>
-                                </div>
-                                <div className="rounded-xl bg-slate-50 p-4">
-                                    <p className="text-slate-500 text-sm">Tahun Dibangun</p>
-                                    <p className="text-2xl font-bold text-slate-900">{selectedBuilding.yearBuilt}</p>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 text-slate-500">
-                                <MapPin size={16} />
-                                <span>{selectedBuilding.location}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="sticky top-0 z-[1100] border-b border-slate-200 bg-white/80 backdrop-blur-md">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-4">
+            <Link to="/" className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors">
+              <ArrowLeft size={20} /><span className="hidden sm:inline">Kembali</span>
+            </Link>
+            <div className="h-6 w-px bg-slate-200" />
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-500/20">
+                <Building2 className="text-white" size={20} />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-slate-900">Gedung</h1>
+                <p className="text-xs text-slate-500">Peta Interaktif Gedung Universitas Udayana</p>
+              </div>
+            </div>
+          </div>
         </div>
-    );
+      </header>
+
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        {/* Stat cards */}
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 p-5 text-white shadow-lg shadow-blue-500/20">
+            <div className="flex items-center justify-between">
+              <div><p className="text-blue-100 text-sm font-medium">Total Gedung Terpetakan</p>
+                <p className="text-3xl font-bold mt-1">{stats.total}</p></div>
+              <Building2 size={36} className="text-blue-300" />
+            </div>
+          </div>
+          <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 p-5 text-white shadow-lg shadow-emerald-500/20">
+            <div className="flex items-center justify-between">
+              <div><p className="text-emerald-100 text-sm font-medium">Total Luas Bangunan</p>
+                <p className="text-3xl font-bold mt-1">{stats.totalArea.toLocaleString('id-ID')} m²</p></div>
+              <Layers size={36} className="text-emerald-300" />
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-5 flex items-start gap-4">
+            <AlertCircle className="text-rose-600 shrink-0 mt-0.5" size={20} />
+            <div className="flex-1">
+              <p className="font-semibold text-rose-900">Tidak dapat memuat peta gedung</p>
+              <p className="text-sm text-rose-700 mt-1">Layanan direktori sedang tidak tersedia.</p>
+            </div>
+            <button onClick={loadData} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 text-white px-4 py-2 text-sm font-medium hover:bg-rose-700">
+              <RefreshCw size={16} /> Coba lagi
+            </button>
+          </div>
+        )}
+
+        {/* Split: list + map */}
+        <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+          {/* Sidebar list */}
+          <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden flex flex-col max-h-[78vh]">
+            <div className="p-4 border-b border-slate-100">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Cari gedung atau kode..."
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2.5 pl-10 pr-3 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+              </div>
+              <p className="text-xs text-slate-400 mt-2">{filtered.length} gedung</p>
+            </div>
+            <div className="overflow-y-auto p-2 space-y-1">
+              {loading ? (
+                Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />
+                ))
+              ) : filtered.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-10">Tidak ada gedung ditemukan.</p>
+              ) : (
+                filtered.map((p) => {
+                  const active = p.siisyana_gedung_id === hoveredId || p.siisyana_gedung_id === selectedId;
+                  return (
+                    <button
+                      key={p.siisyana_gedung_id}
+                      onMouseEnter={() => setHoveredId(p.siisyana_gedung_id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      onClick={() => { focusOnMap(p); openDetail(p); }}
+                      className={`w-full text-left rounded-xl p-3 transition-all border ${active ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'border-transparent hover:bg-slate-50'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-blue-600 font-mono text-[11px] font-semibold">{p.kode}</span>
+                        {p.luas != null && <span className="text-[11px] text-slate-400">{p.luas.toLocaleString('id-ID')} m²</span>}
+                      </div>
+                      <p className="font-semibold text-slate-900 text-sm leading-tight line-clamp-1 mt-0.5">{p.nama}</p>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Map */}
+          <div className="relative h-[60vh] lg:h-[78vh] rounded-2xl border border-slate-200 overflow-hidden shadow-sm bg-slate-100">
+            <div ref={mapContainerRef} className="absolute inset-0 z-[1]" />
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-100/80 z-[2]">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">Memuat peta gedung...</p>
+                </div>
+              </div>
+            )}
+            {!loading && !error && (
+              <div className="absolute bottom-3 left-3 z-[2] rounded-lg bg-white/90 backdrop-blur px-3 py-1.5 text-xs text-slate-600 shadow-sm flex items-center gap-1.5">
+                <Maximize2 size={13} /> Klik gedung untuk lihat detail
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+
+      <MapDetailModal
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setSelectedId(null); }}
+        feature={modalFeature}
+        centroid={modalCentroid}
+        onLihat={handleLihat}
+      />
+
+      <style>{`
+        .gedung-tooltip { background: rgba(15,23,42,0.9); color: #fff; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; padding: 3px 8px; }
+        .gedung-tooltip::before { border-top-color: rgba(15,23,42,0.9); }
+      `}</style>
+    </div>
+  );
 };
