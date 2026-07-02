@@ -55,7 +55,7 @@ export const SiauRoomModal: React.FC<Props> = ({ room, onClose }) => {
     }, [room.id, canSeeSchedule]);
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+        <div className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
             <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 <div className="p-6 border-b border-slate-100 flex items-start justify-between">
                     <div className="min-w-0">

@@ -84,4 +84,31 @@ class InteractiveMapTest extends TestCase
         $res->assertJsonPath('data.features.0.properties.siisyana_gedung_id', 88);
         Http::assertSent(fn (HttpRequest $req) => str_contains($req->url(), '/gedung-polygons'));
     }
+
+    public function test_search_proxy_forwards_query(): void
+    {
+        Http::fake([
+            'siau-gateway.test/*' => Http::response([
+                'data' => [
+                    'gedung' => [['id' => '1', 'kode' => 'FN', 'nama' => 'USDI - Gedung FN', 'nomor_kib' => null]],
+                    'ruangan' => [], 'tanah' => [], 'aset' => [],
+                ],
+                'meta' => ['q' => 'USDI', 'counts' => ['gedung' => 1]],
+            ], 200),
+        ]);
+
+        $res = $this->getJson('/api/v1/siau/search?q=USDI&limit=5');
+
+        $res->assertOk();
+        $res->assertJsonPath('data.gedung.0.nama', 'USDI - Gedung FN');
+        Http::assertSent(function (HttpRequest $req) {
+            parse_str(parse_url($req->url(), PHP_URL_QUERY) ?? '', $q);
+            return str_contains($req->url(), '/search') && ($q['q'] ?? '') === 'USDI';
+        });
+    }
+
+    public function test_search_proxy_rejects_missing_query(): void
+    {
+        $this->getJson('/api/v1/siau/search')->assertStatus(422);
+    }
 }

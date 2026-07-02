@@ -48,6 +48,16 @@ class SiauProxyController extends Controller
         return $this->proxy('/gedung-polygons', []);
     }
 
+    public function search(Request $request): Response
+    {
+        $query = $request->validate([
+            'q' => 'required|string|max:100',
+            'limit' => 'sometimes|integer|between:1,20',
+        ]);
+
+        return $this->proxy('/search', $query);
+    }
+
     public function land(Request $request): Response
     {
         $query = $request->validate([

@@ -53,6 +53,7 @@ Route::prefix('v1/siau')->middleware(['throttle:60,1'])->group(function () {
     Route::get('/health', [SiauProxyController::class, 'health']);
     Route::get('/buildings', [SiauProxyController::class, 'buildings']);
     Route::get('/buildings/{id}', [SiauProxyController::class, 'building'])->where('id', '[0-9]+');
+    Route::get('/search', [SiauProxyController::class, 'search']);
     Route::get('/gedung-polygons', [SiauProxyController::class, 'gedungPolygons']);
     Route::get('/land', [SiauProxyController::class, 'land']);
     Route::get('/land/{id}', [SiauProxyController::class, 'landDetail'])->where('id', '[0-9]+');

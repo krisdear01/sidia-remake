@@ -1,12 +1,32 @@
-import { Room, RoomStatus } from './types';
+import { Room, RoomStatus, SiauRoom } from './types';
 
 // Gateway has no server-side filter for `id_jenis_ruangan`. We pull rooms then
 // keep only those whose `jenis_ruangan.nama` matches one of these tokens (case-insensitive).
+// Backed by SIISYANA tb_m_jenis_ruangan: id 5 Laboratorium; ids 2/3/4
+// Ruang Rapat-Pertemuan / Ruang Sidang / Seminar.
 export const LAB_JENIS_RUANGAN = ['lab', 'laboratorium'];
-export const MEETING_JENIS_RUANGAN = ['ruang rapat', 'ruang sidang', 'meeting'];
+export const MEETING_JENIS_RUANGAN = ['ruang rapat', 'pertemuan', 'ruang sidang', 'seminar', 'meeting'];
 
-// UPT Perpustakaan unit id in SIISYANA (confirmed in PRD).
+// UPT Perpustakaan unit id in SIISYANA (confirmed in PRD). Library rooms are
+// scoped by unit, not jenis_ruangan.
 export const UPT_PERPUSTAKAAN_UNIT_ID = 21;
+
+const jenisMatches = (room: SiauRoom, tokens: readonly string[]): boolean => {
+  const nama = room.jenis_ruangan?.nama?.toLowerCase() ?? '';
+  return tokens.some((t) => nama.includes(t));
+};
+
+/** Room-category predicates for the academic category map pages. */
+export const matchesLab = (room: SiauRoom): boolean => jenisMatches(room, LAB_JENIS_RUANGAN);
+
+export const matchesMeeting = (room: SiauRoom): boolean => jenisMatches(room, MEETING_JENIS_RUANGAN);
+
+export const matchesPerpus = (room: SiauRoom): boolean => {
+  if (room.unit?.id === UPT_PERPUSTAKAAN_UNIT_ID) return true;
+  const unitNama = room.unit?.nama?.toLowerCase() ?? '';
+  const jenisNama = room.jenis_ruangan?.nama?.toLowerCase() ?? '';
+  return unitNama.includes('perpusta') || jenisNama.includes('perpusta') || jenisNama.includes('koleksi baca');
+};
 
 
 export const MOCK_ROOMS: Room[] = [

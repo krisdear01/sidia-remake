@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { MapPin, Navigation, FileText, Loader2, Search, Building2, Landmark, Maximize2, ImageOff } from 'lucide-react';
 import { Modal } from './Modal';
 import { RoomCard } from './RoomCard';
+import { SiauRoomModal } from './SiauRoomModal';
 import { siauApi, SiauApiError } from '../api/client';
 import type { PolygonFeatureProperties, SiauBuildingDetail, SiauLand, SiauRoom } from '../types';
 
@@ -14,18 +15,22 @@ interface Props {
   centroid: [number, number] | null;
   /** Fit the map to this polygon's bounds (the "Lihat" action). */
   onLihat?: () => void;
+  /** Optional room-category filter (academic pages). Scopes Daftar Ruangan. */
+  roomFilter?: (room: SiauRoom) => boolean;
 }
 
 const fmtArea = (n: number | null | undefined) =>
   n == null ? '-' : `${Number(n).toLocaleString('id-ID')} M²`;
 
-export const MapDetailModal: React.FC<Props> = ({ isOpen, onClose, feature, centroid, onLihat }) => {
+export const MapDetailModal: React.FC<Props> = ({ isOpen, onClose, feature, centroid, onLihat, roomFilter }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [building, setBuilding] = useState<SiauBuildingDetail | null>(null);
   const [land, setLand] = useState<SiauLand | null>(null);
   const [rooms, setRooms] = useState<SiauRoom[]>([]);
   const [roomQuery, setRoomQuery] = useState('');
+  // Room whose live schedule/availability is being viewed (opens SiauRoomModal).
+  const [scheduleRoom, setScheduleRoom] = useState<SiauRoom | null>(null);
 
   const assetType = feature?.asset_type ?? null;
   const siisyanaId =
@@ -39,6 +44,7 @@ export const MapDetailModal: React.FC<Props> = ({ isOpen, onClose, feature, cent
     setLand(null);
     setRooms([]);
     setRoomQuery('');
+    setScheduleRoom(null);
     setError(null);
 
     if (!assetType || !siisyanaId) {
@@ -73,16 +79,22 @@ export const MapDetailModal: React.FC<Props> = ({ isOpen, onClose, feature, cent
     return () => { cancelled = true; };
   }, [isOpen, feature, assetType, siisyanaId]);
 
+  // Scope to the page's room category first (academic pages), then search.
+  const categoryRooms = useMemo(
+    () => (roomFilter ? rooms.filter(roomFilter) : rooms),
+    [rooms, roomFilter]
+  );
+
   const filteredRooms = useMemo(() => {
     const q = roomQuery.trim().toLowerCase();
-    if (!q) return rooms;
-    return rooms.filter(
+    if (!q) return categoryRooms;
+    return categoryRooms.filter(
       (r) =>
         r.nama?.toLowerCase().includes(q) ||
         r.kode_ruangan?.toLowerCase().includes(q) ||
         r.jenis_ruangan?.nama?.toLowerCase().includes(q)
     );
-  }, [rooms, roomQuery]);
+  }, [categoryRooms, roomQuery]);
 
   const thumbnail = building?.gallery?.find((g) => g.url)?.url ?? null;
   const menujuHref = centroid
@@ -216,9 +228,13 @@ export const MapDetailModal: React.FC<Props> = ({ isOpen, onClose, feature, cent
               </div>
               <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
                 {filteredRooms.length === 0 ? (
-                  <p className="text-sm text-slate-400 py-6 text-center">Tidak ada ruangan.</p>
+                  <p className="text-sm text-slate-400 py-6 text-center">
+                    {roomFilter ? 'Belum ada ruangan kategori ini pada gedung ini.' : 'Tidak ada ruangan.'}
+                  </p>
                 ) : (
-                  filteredRooms.map((r) => <RoomCard key={r.id} room={r} />)
+                  filteredRooms.map((r) => (
+                    <RoomCard key={r.id} room={r} showAvailability onClick={setScheduleRoom} />
+                  ))
                 )}
               </div>
             </div>
@@ -243,6 +259,11 @@ export const MapDetailModal: React.FC<Props> = ({ isOpen, onClose, feature, cent
           </div>
         )}
       </div>
+
+      {/* Nested room detail — live SIMPR schedule + availability */}
+      {scheduleRoom && (
+        <SiauRoomModal room={scheduleRoom} onClose={() => setScheduleRoom(null)} />
+      )}
     </Modal>
   );
 };

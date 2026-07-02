@@ -585,6 +585,9 @@ export const siauApi = {
   },
   // Building footprint polygons (GeoJSON FeatureCollection) for the /gedung map.
   gedungPolygons: () => siauFetch('/gedung-polygons'),
+  // Unified global search (gedung / ruangan / tanah / aset).
+  search: (q: string, limit?: number) =>
+    siauFetch('/search' + siauBuildQuery({ q, limit })),
   rooms: {
     list: (params?: Record<string, any>) => siauFetch('/rooms' + siauBuildQuery(params)),
     get: (id: string | number) => siauFetch(`/rooms/${id}`),

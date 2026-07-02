@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\RoomAssetsController;
 use App\Http\Controllers\Api\V1\RoomAvailabilityController;
 use App\Http\Controllers\Api\V1\RoomController;
 use App\Http\Controllers\Api\V1\RoomScheduleController;
+use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\StatsController;
 use Illuminate\Support\Facades\Route;
 
@@ -33,6 +34,8 @@ Route::prefix('v1')
                     ->middleware('siau.cache:86400,60');
                 Route::get('/buildings/{id}', [BuildingController::class, 'show'])
                     ->middleware('siau.cache:21600,60');
+                Route::get('/search', [SearchController::class, 'index'])
+                    ->middleware('siau.cache:60,30');
                 Route::get('/gedung-polygons', [GedungPolygonController::class, 'index'])
                     ->middleware('siau.cache:86400,60');
                 Route::get('/land', [LandController::class, 'index'])

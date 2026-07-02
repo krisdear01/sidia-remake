@@ -76,6 +76,14 @@ export interface SiauLand {
   longitude: number | null;
 }
 
+/** Unified global search results (siau/search). */
+export interface SiauSearchResults {
+  gedung: { id: string; kode: string | null; nama: string | null; nomor_kib: string | null }[];
+  ruangan: { id: string; kode_ruangan: string | null; nama: string | null; id_gedung: string | null; gedung_nama: string | null }[];
+  tanah: { id: string; nomor_shp: string | null; nomor_kib: string | null; lokasi: string | null }[];
+  aset: { id: string; kode_barang: string | null; nama_barang: string | null; merk_type: string | null; id_ruangan: string | null }[];
+}
+
 /** Per-feature properties for /api/v1/siau/gedung-polygons (building footprints). */
 export interface GedungPolygonProperties {
   asset_type: 'bangunan';

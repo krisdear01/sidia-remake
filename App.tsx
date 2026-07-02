@@ -4,10 +4,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { CategoryMenu } from './components/CategoryMenu';
 import { AssetMap } from './components/AssetMap';
 import { SiauRoomModal } from './components/SiauRoomModal';
+import { MapDetailModal } from './components/MapDetailModal';
 import { Paginator, PAGE_SIZE_OPTIONS } from './components/Paginator';
 import { Search, Filter, ArrowRight, MapPin, Monitor, Building2, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { isAuthenticated, siauApi, SiauApiError } from './api/client';
-import type { SiauRoom, SiauBuilding } from './types';
+import type { SiauRoom, SiauBuilding, SiauSearchResults, PolygonFeatureProperties } from './types';
 import { LoginPage } from './pages/LoginPage';
 import { AdminLayout } from './pages/AdminLayout';
 import { Dashboard } from './pages/Dashboard';
@@ -61,6 +62,51 @@ const HomePage: React.FC = () => {
   // Client-side pagination for the room table.
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
+
+  // Global "Cari Aset" search (gedung / ruangan / tanah / aset).
+  const [searchResults, setSearchResults] = useState<SiauSearchResults | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Detail modals opened from a search result.
+  const [detailFeature, setDetailFeature] = useState<PolygonFeatureProperties | null>(null);
+  const [detailCentroid, setDetailCentroid] = useState<[number, number] | null>(null);
+  const [roomModal, setRoomModal] = useState<SiauRoom | null>(null);
+
+  // Debounced global search: >=2 chars, 250ms.
+  useEffect(() => {
+    const q = searchTerm.trim();
+    if (q.length < 2) { setSearchResults(null); setSearchLoading(false); return; }
+    setSearchLoading(true);
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const res = await siauApi.search(q, 8);
+        if (!cancelled) { setSearchResults(res.data); setSearchOpen(true); }
+      } catch {
+        if (!cancelled) setSearchResults(null);
+      } finally {
+        if (!cancelled) setSearchLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [searchTerm]);
+
+  const openGedung = (id: string) => {
+    setDetailFeature({ asset_type: 'bangunan', siisyana_gedung_id: Number(id), siisyana_tanah_id: null, name: 'Gedung' } as PolygonFeatureProperties);
+    setDetailCentroid(null); setSearchOpen(false);
+  };
+  const openTanah = (id: string) => {
+    setDetailFeature({ asset_type: 'tanah', siisyana_gedung_id: null, siisyana_tanah_id: Number(id), name: 'Tanah' } as PolygonFeatureProperties);
+    setDetailCentroid(null); setSearchOpen(false);
+  };
+  const openRoomById = async (roomId: string) => {
+    setSearchOpen(false);
+    try { const r = await siauApi.rooms.get(roomId); setRoomModal(r.data); } catch { /* ignore */ }
+  };
+
+  const searchTotal = searchResults
+    ? searchResults.gedung.length + searchResults.ruangan.length + searchResults.tanah.length + searchResults.aset.length
+    : 0;
 
   // Real-time clock
   useEffect(() => {
@@ -193,10 +239,10 @@ const HomePage: React.FC = () => {
         <CategoryMenu />
 
         {/* Search & Location Bar */}
-        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 rounded-2xl bg-white p-6 shadow-sm border border-slate-100 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 rounded-2xl bg-white p-6 shadow-sm border border-slate-100 relative">
+          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 rounded-l-2xl"></div>
 
-          {/* Search Input */}
+          {/* Search Input + global results dropdown */}
           <div className="space-y-2">
             <label className="text-sm font-semibold text-slate-700">Cari Aset</label>
             <div className="relative">
@@ -205,16 +251,62 @@ const HomePage: React.FC = () => {
               </div>
               <input
                 type="text"
-                placeholder="Kode Gedung, Nama Ruangan..."
-                className="block w-full rounded-lg border border-slate-300 bg-slate-50 p-3 pl-10 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:ring-blue-500 sm:text-sm transition-all"
+                placeholder="Gedung, ruangan, tanah, atau aset..."
+                className="block w-full rounded-lg border border-slate-300 bg-slate-50 p-3 pl-10 pr-9 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:ring-blue-500 sm:text-sm transition-all"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onFocus={() => { if (searchResults) setSearchOpen(true); }}
+                onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
               />
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                <span className="text-xs text-slate-400">Tekan enter untuk mencari</span>
-              </div>
+              {searchLoading && (
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+                </div>
+              )}
+
+              {/* Results dropdown */}
+              {searchOpen && searchTerm.trim().length >= 2 && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-2 max-h-[420px] overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl">
+                  {searchTotal === 0 && !searchLoading ? (
+                    <p className="px-4 py-6 text-center text-sm text-slate-400">Tidak ada hasil untuk "{searchTerm.trim()}".</p>
+                  ) : (
+                    <div className="py-1 text-sm">
+                      <SearchGroup label="Gedung" items={searchResults?.gedung ?? []} render={(g: any) => (
+                        <button key={`g${g.id}`} onMouseDown={(e) => { e.preventDefault(); openGedung(g.id); }} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-slate-50">
+                          <Building2 size={16} className="text-blue-600 shrink-0" />
+                          <span className="min-w-0"><span className="font-medium text-slate-900">{g.nama}</span>
+                            <span className="ml-2 text-xs text-slate-400 font-mono">{g.kode}{g.nomor_kib ? ` · KIB ${g.nomor_kib}` : ''}</span></span>
+                        </button>
+                      )} />
+                      <SearchGroup label="Ruangan" items={searchResults?.ruangan ?? []} render={(r: any) => (
+                        <button key={`r${r.id}`} onMouseDown={(e) => { e.preventDefault(); openRoomById(r.id); }} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-slate-50">
+                          <Monitor size={16} className="text-emerald-600 shrink-0" />
+                          <span className="min-w-0"><span className="font-medium text-slate-900">{r.nama}</span>
+                            <span className="ml-2 text-xs text-slate-400 font-mono">{r.kode_ruangan}</span>
+                            {r.gedung_nama && <span className="ml-2 text-xs text-slate-400">· {r.gedung_nama}</span>}</span>
+                        </button>
+                      )} />
+                      <SearchGroup label="Tanah" items={searchResults?.tanah ?? []} render={(t: any) => (
+                        <button key={`t${t.id}`} onMouseDown={(e) => { e.preventDefault(); openTanah(t.id); }} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-slate-50">
+                          <MapPin size={16} className="text-amber-600 shrink-0" />
+                          <span className="min-w-0"><span className="font-medium text-slate-900">{t.nomor_shp ?? t.nomor_kib ?? 'Tanah'}</span>
+                            {t.lokasi && <span className="ml-2 text-xs text-slate-400">{t.lokasi}</span>}</span>
+                        </button>
+                      )} />
+                      <SearchGroup label="Aset" items={searchResults?.aset ?? []} render={(a: any) => (
+                        <button key={`a${a.id}`} disabled={!a.id_ruangan} onMouseDown={(e) => { e.preventDefault(); if (a.id_ruangan) openRoomById(a.id_ruangan); }} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-slate-50 disabled:opacity-50">
+                          <Building2 size={16} className="text-purple-600 shrink-0" />
+                          <span className="min-w-0"><span className="font-medium text-slate-900">{a.nama_barang}</span>
+                            <span className="ml-2 text-xs text-slate-400 font-mono">{a.kode_barang}</span>
+                            {a.merk_type && <span className="ml-2 text-xs text-slate-400">· {a.merk_type}</span>}</span>
+                        </button>
+                      )} />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <p className="text-xs text-slate-400">Contoh: Gedung A, Lab Komputer, dll.</p>
+            <p className="text-xs text-slate-400">Cari gedung, ruangan, tanah, atau aset dari data SIISYANA.</p>
           </div>
 
           {/* Building Dropdown (sourced from SIAU gateway) */}
@@ -453,6 +545,28 @@ const HomePage: React.FC = () => {
       {selectedRoom && (
         <SiauRoomModal room={selectedRoom} onClose={() => setSelectedRoom(null)} />
       )}
+
+      {/* Search-result detail: gedung/tanah -> MapDetailModal; ruangan/aset -> SiauRoomModal */}
+      <MapDetailModal
+        isOpen={detailFeature !== null}
+        onClose={() => setDetailFeature(null)}
+        feature={detailFeature}
+        centroid={detailCentroid}
+      />
+      {roomModal && (
+        <SiauRoomModal room={roomModal} onClose={() => setRoomModal(null)} />
+      )}
+    </div>
+  );
+};
+
+/** Section in the global-search dropdown; renders nothing when empty. */
+const SearchGroup: React.FC<{ label: string; items: any[]; render: (item: any) => React.ReactNode }> = ({ label, items, render }) => {
+  if (!items || items.length === 0) return null;
+  return (
+    <div>
+      <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
+      {items.map(render)}
     </div>
   );
 };
@@ -484,8 +598,10 @@ const App: React.FC = () => {
         {/* Academic Public Routes */}
         <Route path="/gedung" element={<GedungPage />} />
         <Route path="/laboratorium" element={<LaboratoriumPage />} />
+        <Route path="/lab" element={<LaboratoriumPage />} />
         <Route path="/ruang-rapat" element={<RuangRapatPage />} />
         <Route path="/perpustakaan" element={<PerpustakaanPage />} />
+        <Route path="/perpus" element={<PerpustakaanPage />} />
 
         {/* Admin Login */}
         <Route
