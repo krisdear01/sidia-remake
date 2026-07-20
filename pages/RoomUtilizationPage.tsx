@@ -13,7 +13,7 @@ const SHEET_NAMES: Record<UtilizationSession, string> = {
     malam: 'Persentase Utilitas Malam',
 };
 
-interface ParsedRow {
+export interface ParsedRow {
     faculty_name: string;
     campus_name: string;
     gedung_name: string;
@@ -24,7 +24,7 @@ interface ParsedRow {
 
 // Source sheets mix casing for campus names ("Jimbaran" vs "JIMBARAN"), which
 // would otherwise fragment grouping/filtering into duplicate campus buckets.
-function normalizeCampusName(raw: string): string {
+export function normalizeCampusName(raw: string): string {
     const trimmed = raw.trim();
     return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
 }
@@ -32,7 +32,7 @@ function normalizeCampusName(raw: string): string {
 // The summary sheets use merged cells: faculty (col B) and campus (col C) are
 // only populated on the first row of each group and blank afterward. Forward-fill
 // them, and skip header/title rows and the trailing totals row.
-function parseSummarySheet(sheet: XLSX.WorkSheet): ParsedRow[] {
+export function parseSummarySheet(sheet: XLSX.WorkSheet): ParsedRow[] {
     const raw: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     const rows: ParsedRow[] = [];
     let lastFaculty = '';

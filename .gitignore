@@ -25,3 +25,4 @@ dist-ssr
 
 # Session scratch (temp specs, working notes)
 scratchpad/
+.gstack/

@@ -19,6 +19,7 @@ npm install
 npm run dev        # vite dev server on :3000, host 0.0.0.0
 npm run build
 npm run preview
+npm test            # vitest run — frontend unit/component tests
 ```
 `GEMINI_API_KEY` from `.env.local` is exposed to the client as `process.env.API_KEY` / `process.env.GEMINI_API_KEY` via `vite.config.ts`.
 
@@ -63,3 +64,14 @@ Database is SQLite by default (`backend/database/database.sqlite`). Seeders comp
 - The Vite alias `@` resolves to the repo root (see `vite.config.ts`), so `@/components/...` works from any depth.
 - The backend serves only JSON — no Blade views are used by the SPA. The Laravel `vite.config.js` inside `backend/` is for Laravel's own asset pipeline and is unrelated to the root SPA build.
 - When adding a new resource end-to-end: add migration + model + `Api/*Controller` + routes in the appropriate `routes/api.php` block, then add a matching `xxxApi` object in `api/client.ts` before consuming it from a page.
+
+## Testing
+
+Frontend: `npm test` (Vitest + `@testing-library/react`, config in `vitest.config.ts`). Backend: `cd backend && php artisan test` (PHPUnit, in-memory SQLite). See [TESTING.md](TESTING.md) for conventions and layer breakdown. CI runs both suites on every push/PR via `.github/workflows/test.yml`.
+
+100% test coverage is the goal — tests make vibe coding safe, not slow:
+- New functions get a corresponding test.
+- Bug fixes get a regression test that reproduces the bug first.
+- New error-handling paths get a test that triggers the error.
+- New conditionals (if/else, switch) get tests for every branch.
+- Never commit code that makes existing tests fail.
