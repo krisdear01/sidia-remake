@@ -17,6 +17,7 @@ import { RoomsPage } from './pages/RoomsPage';
 import { AssetsPage } from './pages/AssetsPage';
 import { PolygonsPage } from './pages/PolygonsPage';
 import { SchedulesPage } from './pages/SchedulesPage';
+import { RoomUtilizationPage } from './pages/RoomUtilizationPage';
 import { IdentityMapPage } from './pages/admin/IdentityMapPage';
 import { CetakDbrPage } from './pages/admin/CetakDbrPage';
 import { PenyusutanAsetPage } from './pages/PenyusutanAsetPage';
@@ -630,6 +631,7 @@ const App: React.FC = () => {
           <Route path="penyusutan" element={<PenyusutanAsetPage />} />
           <Route path="polygons" element={<PolygonsPage />} />
           <Route path="schedules" element={<SchedulesPage />} />
+          <Route path="utilitas-ruangan" element={<RoomUtilizationPage />} />
           <Route path="auctions" element={<AdminAuctionsPage />} />
         </Route>
 

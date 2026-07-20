@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\ScheduleController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\LocationController;
 use App\Http\Controllers\Api\FacultyController;
+use App\Http\Controllers\Api\RoomUtilizationController;
 use App\Http\Controllers\Api\StatsController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BidderAuthController;
@@ -178,6 +179,11 @@ Route::prefix('v1/admin')->middleware('auth:sanctum')->group(function () {
     // Schedules CRUD
     Route::apiResource('schedules', ScheduleController::class)->except(['index', 'show']);
     Route::post('/schedules/sync-sipirang', [ScheduleController::class, 'syncWithSipirang']);
+
+    // Room Utilizations — admin-only report data, no public routes
+    Route::get('/room-utilizations/semesters', [RoomUtilizationController::class, 'semesters']);
+    Route::post('/room-utilizations/import', [RoomUtilizationController::class, 'import']);
+    Route::apiResource('room-utilizations', RoomUtilizationController::class);
 
     // ==================== E-LELANG ADMIN ROUTES ====================
 

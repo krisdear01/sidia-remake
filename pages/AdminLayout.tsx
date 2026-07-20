@@ -19,6 +19,7 @@ import {
     Users,
     ShieldCheck,
     TrendingDown,
+    BarChart3,
 } from 'lucide-react';
 
 interface NavItem {
@@ -38,6 +39,7 @@ const navItems: NavItem[] = [
     { path: '/admin/penyusutan', icon: TrendingDown, label: 'Penyusutan Aset', badge: 'Soon' },
     { path: '/admin/polygons', icon: Map, label: 'Peta & Polygon' },
     { path: '/admin/schedules', icon: Calendar, label: 'Jadwal' },
+    { path: '/admin/utilitas-ruangan', icon: BarChart3, label: 'Utilitas Ruangan' },
     { path: '/admin/auctions', icon: Gavel, label: 'E-Tender' },
 ];
 

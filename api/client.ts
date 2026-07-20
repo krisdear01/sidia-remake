@@ -201,6 +201,49 @@ export const schedulesApi = {
   }),
 };
 
+// Room Utilizations API — admin-only, no public routes
+export const roomUtilizationApi = {
+  list: (params?: Record<string, any>) => {
+    const query = params ? '?' + new URLSearchParams(params).toString() : '';
+    return apiFetch<any[]>(`/admin/room-utilizations${query}`);
+  },
+  semesters: () => apiFetch<string[]>('/admin/room-utilizations/semesters'),
+  get: (id: number) => apiFetch<any>(`/admin/room-utilizations/${id}`),
+  create: (data: any) => apiFetch<any>('/admin/room-utilizations', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  update: (id: number, data: any) => apiFetch<any>(`/admin/room-utilizations/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  delete: (id: number) => apiFetch<any>(`/admin/room-utilizations/${id}`, {
+    method: 'DELETE',
+  }),
+  import: (data: {
+    semester: string;
+    session: 'pagi' | 'malam';
+    clear_existing?: boolean;
+    rows: {
+      faculty_name: string;
+      campus_name: string;
+      gedung_name: string;
+      room_count: number;
+      utilization_percent: number;
+      notes?: string;
+    }[];
+  }) => apiFetch<{
+    message: string;
+    imported_count: number;
+    error_count: number;
+    errors: string[];
+    rows: { id: number; gedung_name: string }[];
+  }>('/admin/room-utilizations/import', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+};
+
 // Categories API
 export const categoriesApi = {
   list: () => apiFetch<any[]>('/categories'),

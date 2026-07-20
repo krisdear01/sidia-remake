@@ -33,6 +33,25 @@ export interface Room {
   schedule: ScheduleItem[];
 }
 
+export type UtilizationSession = 'pagi' | 'malam';
+
+export interface RoomUtilization {
+  id: number;
+  semester: string;
+  session: UtilizationSession;
+  faculty_name: string;
+  faculty_id: number | null;
+  campus_name: string;
+  location_id: number | null;
+  gedung_name: string;
+  building_id: number | null;
+  room_count: number;
+  utilization_percent: string; // decimal cast, returned as string by Laravel
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // =============================================================================
 // SIAU Gateway response shapes (mirror siau-gateway/app/Domain/Mapping/*Mapper.php)
 // These types describe data fetched from SIAU's backend /api/v1/siau/* proxy.

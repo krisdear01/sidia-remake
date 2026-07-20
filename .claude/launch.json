@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "siau-backend",
+      "runtimeExecutable": "php",
+      "runtimeArgs": ["artisan", "serve"],
+      "cwd": "backend",
+      "port": 8000
     }
   ]
 }
