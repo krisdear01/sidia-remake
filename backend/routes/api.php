@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\BidController;
 use App\Http\Controllers\Api\AdminAuctionController;
 use App\Http\Controllers\Api\SiauProxyController;
 use App\Http\Controllers\Api\Admin\AdminSiauProxyController;
+use Laravel\Sanctum\Http\Middleware\CheckAbilities;
 
 /*
 |--------------------------------------------------------------------------
@@ -28,7 +29,7 @@ use App\Http\Controllers\Api\Admin\AdminSiauProxyController;
 // SIAU Gateway ADMIN proxy — Sanctum-gated, injects SIAU_ADMIN_TOKEN server-side.
 // Browser MUST NOT know about this token. Routes mirror gateway /admin/identity-map/*.
 Route::prefix('v1/admin/siau')
-    ->middleware(['auth:sanctum', 'throttle:30,1'])
+    ->middleware(['auth:sanctum', CheckAbilities::class . ':admin', 'throttle:30,1'])
     ->group(function () {
         Route::get('/identity-map/unmatched', [AdminSiauProxyController::class, 'unmatched']);
         Route::post('/identity-map/resync', [AdminSiauProxyController::class, 'resync']);
@@ -126,7 +127,7 @@ Route::prefix('v1')->group(function () {
 });
 
 // ==================== BIDDER PROTECTED ROUTES ====================
-Route::prefix('v1/bidder')->middleware('auth:sanctum')->group(function () {
+Route::prefix('v1/bidder')->middleware(['auth:sanctum', CheckAbilities::class . ':bidder'])->group(function () {
     // Auth
     Route::post('/logout', [BidderAuthController::class, 'logout']);
     Route::get('/profile', [BidderAuthController::class, 'profile']);
@@ -148,7 +149,7 @@ Route::prefix('v1/bidder')->middleware('auth:sanctum')->group(function () {
 });
 
 // Protected routes (admin only)
-Route::prefix('v1/admin')->middleware('auth:sanctum')->group(function () {
+Route::prefix('v1/admin')->middleware(['auth:sanctum', CheckAbilities::class . ':admin'])->group(function () {
     // Auth
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);

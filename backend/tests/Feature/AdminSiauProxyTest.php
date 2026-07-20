@@ -33,7 +33,7 @@ class AdminSiauProxyTest extends TestCase
             'email' => 'admin@siau.unud.ac.id',
             'password' => Hash::make('test-password'),
         ]);
-        Sanctum::actingAs($user);
+        Sanctum::actingAs($user, ['admin']);
         return $user;
     }
 

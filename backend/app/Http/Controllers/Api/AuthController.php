@@ -28,8 +28,9 @@ class AuthController extends Controller
         // Delete old tokens
         $user->tokens()->delete();
 
-        // Create new token
-        $token = $user->createToken('auth-token')->plainTextToken;
+        // Create new token, scoped to the 'admin' ability so it cannot be
+        // used against bidder-only routes or vice versa.
+        $token = $user->createToken('auth-token', ['admin'])->plainTextToken;
 
         return response()->json([
             'user' => $user,

@@ -110,8 +110,9 @@ class BidderAuthController extends Controller
             ], 403);
         }
 
-        // Create token
-        $token = $bidder->createToken('bidder-token')->plainTextToken;
+        // Create token, scoped to the 'bidder' ability so it cannot be
+        // used against admin-only routes.
+        $token = $bidder->createToken('bidder-token', ['bidder'])->plainTextToken;
 
         return response()->json([
             'message' => 'Login berhasil!',
